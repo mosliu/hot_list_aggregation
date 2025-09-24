@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 from loguru import logger
 
 from services.news_service import NewsService
@@ -10,30 +11,25 @@ router = APIRouter()
 news_service = NewsService()
 
 
-class NewsResponse:
-    def __init__(self, id: int, title: str, desc: str = None, url: str = None, 
-                 source: str = None, news_type: str = None, processing_status: str = "pending",
-                 created_at: str = "", updated_at: str = ""):
-        self.id = id
-        self.title = title
-        self.desc = desc
-        self.url = url
-        self.source = source
-        self.news_type = news_type
-        self.processing_status = processing_status
-        self.created_at = created_at
-        self.updated_at = updated_at
+class NewsResponse(BaseModel):
+    id: int
+    title: str
+    desc: Optional[str] = None
+    url: Optional[str] = None
+    source: Optional[str] = None
+    news_type: Optional[str] = None
+    processing_status: str = "pending"
+    created_at: str = ""
+    updated_at: str = ""
 
 
-class NewsStatisticsResponse:
-    def __init__(self, total_count: int, processed_count: int, pending_count: int,
-                 failed_count: int, by_type: dict, by_source: dict):
-        self.total_count = total_count
-        self.processed_count = processed_count
-        self.pending_count = pending_count
-        self.failed_count = failed_count
-        self.by_type = by_type
-        self.by_source = by_source
+class NewsStatisticsResponse(BaseModel):
+    total_count: int
+    processed_count: int
+    pending_count: int
+    failed_count: int
+    by_type: dict
+    by_source: dict
 
 
 @router.get("/unprocessed", response_model=List[NewsResponse])
@@ -76,11 +72,11 @@ async def get_unprocessed_news(
             NewsResponse(
                 id=news["id"],
                 title=news["title"],
-                desc=news.get("desc"),
-                url=news.get("url"),
-                source=news.get("source"),
-                news_type=news.get("news_type"),
-                processing_status=news.get("processing_status", "pending"),
+                desc=news.get("desc") or "",
+                url=news.get("url") or "",
+                source=news.get("source") or "",
+                news_type=news.get("news_type") or "",
+                processing_status=news.get("processing_status") or "pending",
                 created_at=news["created_at"].isoformat() if news.get("created_at") else "",
                 updated_at=news["updated_at"].isoformat() if news.get("updated_at") else ""
             )
@@ -125,11 +121,11 @@ async def get_recent_news_by_keywords(
             NewsResponse(
                 id=news["id"],
                 title=news["title"],
-                desc=news.get("desc"),
-                url=news.get("url"),
-                source=news.get("source"),
-                news_type=news.get("news_type"),
-                processing_status=news.get("processing_status", "pending"),
+                desc=news.get("desc") or "",
+                url=news.get("url") or "",
+                source=news.get("source") or "",
+                news_type=news.get("news_type") or "",
+                processing_status=news.get("processing_status") or "pending",
                 created_at=news["created_at"].isoformat() if news.get("created_at") else "",
                 updated_at=news["updated_at"].isoformat() if news.get("updated_at") else ""
             )
@@ -160,6 +156,61 @@ async def batch_update_news_type(
         
     except Exception as e:
         logger.error(f"批量更新新闻类型失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/baidu/since-last-fetch", response_model=List[NewsResponse])
+async def get_baidu_news_since_last_fetch():
+    """获取所有type='baidu'的数据从上次获取到现在"""
+    try:
+        news_list = await news_service.get_baidu_news_since_last_fetch()
+        
+        return [
+            NewsResponse(
+                id=news["id"],
+                title=news["title"],
+                desc=news.get("desc") or "",
+                url=news.get("url") or "",
+                source=news.get("type") or "",  # 使用type作为source
+                news_type=news.get("type") or "",
+                processing_status=news.get("processing_status") or "pending",
+                created_at=news["first_add_time"].isoformat() if news.get("first_add_time") else "",
+                updated_at=news["last_update_time"].isoformat() if news.get("last_update_time") else ""
+            )
+            for news in news_list
+        ]
+        
+    except Exception as e:
+        logger.error(f"获取百度新闻失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/status")
+async def update_news_status(
+    news_ids: List[int],
+    stage: str = Query(..., description="处理阶段"),
+    error_message: Optional[str] = Query(None, description="错误信息")
+):
+    """更新新闻处理状态"""
+    try:
+        if not news_ids:
+            raise HTTPException(status_code=400, detail="新闻ID列表不能为空")
+        
+        success = await news_service.update_news_status(
+            news_ids=news_ids,
+            stage=stage,
+            error_message=error_message
+        )
+        
+        return {
+            "message": f"成功更新 {len(news_ids)} 条新闻状态",
+            "success": success,
+            "stage": stage,
+            "news_count": len(news_ids)
+        }
+        
+    except Exception as e:
+        logger.error(f"更新新闻状态失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -11,6 +11,8 @@ from models.enums import ProcessingStage
 from models.logs import ProcessingLog
 from utils.logger import get_logger
 from utils.exceptions import DatabaseError, DataValidationError
+import os
+import json
 
 logger = get_logger(__name__)
 
@@ -20,6 +22,42 @@ class NewsService:
     
     def __init__(self):
         self.logger = logger
+        self.last_fetch_file = "data/last_fetch_time.json"
+        self._ensure_data_dir()
+    
+    def _ensure_data_dir(self):
+        """确保数据目录存在"""
+        os.makedirs("data", exist_ok=True)
+    
+    def _get_last_fetch_time(self, news_type: str) -> Optional[datetime]:
+        """获取指定类型新闻的上次获取时间"""
+        try:
+            if os.path.exists(self.last_fetch_file):
+                with open(self.last_fetch_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    time_str = data.get(news_type)
+                    if time_str:
+                        return datetime.fromisoformat(time_str)
+        except Exception as e:
+            self.logger.warning(f"读取上次获取时间失败: {e}")
+        return None
+    
+    def _save_last_fetch_time(self, news_type: str, fetch_time: datetime):
+        """保存指定类型新闻的获取时间"""
+        try:
+            data = {}
+            if os.path.exists(self.last_fetch_file):
+                with open(self.last_fetch_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            
+            data[news_type] = fetch_time.isoformat()
+            
+            with open(self.last_fetch_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+                
+            self.logger.info(f"保存 {news_type} 类型新闻获取时间: {fetch_time}")
+        except Exception as e:
+            self.logger.error(f"保存上次获取时间失败: {e}")
     
     async def get_unprocessed_news(
         self,
@@ -114,6 +152,69 @@ class NewsService:
             self.logger.error(f"获取未处理新闻失败: {e}")
             raise DatabaseError(f"获取未处理新闻失败: {e}")
     
+    async def get_baidu_news_since_last_fetch(self) -> List[Dict[str, Any]]:
+        """
+        获取所有type='baidu'的数据从上次获取到现在
+        
+        Returns:
+            百度新闻列表
+        """
+        try:
+            current_time = datetime.now()
+            last_fetch_time = self._get_last_fetch_time('baidu')
+            
+            # 如果没有上次获取时间，默认获取最近24小时的数据
+            if not last_fetch_time:
+                last_fetch_time = current_time - timedelta(hours=24)
+                self.logger.info("未找到上次获取时间，默认获取最近24小时的百度新闻")
+            
+            with get_db_session() as session:
+                # 查询type='baidu'且时间在上次获取之后的所有新闻
+                query = session.query(HotNewsBase).filter(
+                    and_(
+                        HotNewsBase.type == 'baidu',
+                        HotNewsBase.first_add_time > last_fetch_time,
+                        HotNewsBase.first_add_time <= current_time
+                    )
+                ).order_by(desc(HotNewsBase.first_add_time))
+                
+                news_records = query.all()
+                
+                # 转换为字典格式
+                news_list = []
+                for news in news_records:
+                    news_dict = {
+                        'id': news.id,
+                        'type': news.type,
+                        'url': news.url,
+                        'url_md5': news.url_md5,
+                        'title': news.title,
+                        'desc': news.desc,
+                        'content': news.content,
+                        'city_name': news.city_name,
+                        'first_add_time': news.first_add_time,
+                        'last_update_time': news.last_update_time,
+                        'highest_rank': news.highest_rank,
+                        'lowest_rank': news.lowest_rank,
+                        'latest_rank': news.latest_rank,
+                        'highest_hot_num': news.highest_hot_num,
+                        'processing_status': news.processing_status.processing_stage if news.processing_status else None
+                    }
+                    news_list.append(news_dict)
+                
+                # 保存本次获取时间
+                self._save_last_fetch_time('baidu', current_time)
+                
+                self.logger.info(
+                    f"获取百度新闻: 时间范围 {last_fetch_time} 到 {current_time}, "
+                    f"共获取 {len(news_list)} 条新闻"
+                )
+                return news_list
+                
+        except Exception as e:
+            self.logger.error(f"获取百度新闻失败: {e}")
+            raise DatabaseError(f"获取百度新闻失败: {e}")
+    
     async def get_news_by_ids(self, news_ids: List[int]) -> List[Dict[str, Any]]:
         """
         根据ID列表获取新闻
@@ -164,7 +265,7 @@ class NewsService:
     async def update_news_status(
         self,
         news_ids: List[int],
-        status: NewsProcessingStatus,
+        stage: str,
         error_message: Optional[str] = None
     ) -> bool:
         """
@@ -172,7 +273,7 @@ class NewsService:
         
         Args:
             news_ids: 新闻ID列表
-            status: 新的状态
+            stage: 处理阶段
             error_message: 错误信息（如果有）
             
         Returns:
@@ -183,22 +284,40 @@ class NewsService:
         
         try:
             with get_db_session() as session:
-                # 更新新闻状态
-                update_data = {
-                    'processing_status': status,
-                    'updated_at': datetime.now()
-                }
+                updated_count = 0
                 
-                if error_message:
-                    update_data['error_message'] = error_message
-                
-                updated_count = session.query(HotNewsBase).filter(
-                    HotNewsBase.id.in_(news_ids)
-                ).update(update_data, synchronize_session=False)
+                for news_id in news_ids:
+                    # 查找或创建处理状态记录
+                    status_record = session.query(NewsProcessingStatus).filter(
+                        NewsProcessingStatus.news_id == news_id
+                    ).first()
+                    
+                    if status_record:
+                        # 更新现有记录
+                        status_record.processing_stage = stage
+                        status_record.last_processed_at = datetime.now()
+                        status_record.updated_at = datetime.now()
+                        if error_message:
+                            status_record.error_message = error_message
+                            status_record.retry_count += 1
+                        else:
+                            status_record.error_message = None
+                    else:
+                        # 创建新记录
+                        status_record = NewsProcessingStatus(
+                            news_id=news_id,
+                            processing_stage=stage,
+                            last_processed_at=datetime.now(),
+                            error_message=error_message,
+                            retry_count=1 if error_message else 0
+                        )
+                        session.add(status_record)
+                    
+                    updated_count += 1
                 
                 session.commit()
                 
-                self.logger.info(f"更新了 {updated_count} 条新闻状态为 {status.value}")
+                self.logger.info(f"更新了 {updated_count} 条新闻状态为 {stage}")
                 return updated_count > 0
                 
         except Exception as e:

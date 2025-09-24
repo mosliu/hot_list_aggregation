@@ -23,3 +23,21 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # 创建基础模型类
 Base = declarative_base()
+
+# 数据库会话依赖
+def get_db_session():
+    """获取数据库会话"""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# 异步获取数据库会话
+async def get_async_db_session():
+    """异步获取数据库会话"""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
