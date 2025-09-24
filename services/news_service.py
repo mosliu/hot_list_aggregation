@@ -502,13 +502,14 @@ class NewsService:
         try:
             with get_db_session() as session:
                 log_entry = ProcessingLog(
-                    task_name=task_name,
+                    task_type=task_name,  # 使用task_type字段
+                    task_id=f"{task_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",  # 生成任务ID
+                    start_time=datetime.now(),  # 使用start_time字段
+                    status="processing",  # 添加必需的status字段
                     total_count=total_count,
-                    processed_count=processed_count,
                     success_count=success_count,
-                    error_count=error_count,
-                    details=details or {},
-                    created_at=datetime.now()
+                    failed_count=error_count,  # 使用failed_count字段
+                    config_snapshot=details or {}  # 使用config_snapshot字段存储详细信息
                 )
                 
                 session.add(log_entry)

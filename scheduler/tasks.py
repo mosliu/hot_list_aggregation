@@ -1,7 +1,7 @@
 """定时任务实现"""
 
 import asyncio
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 
 from services.news_service import NewsService
@@ -26,7 +26,7 @@ class NewsProcessingTask:
     async def process_unprocessed_news(
         self,
         batch_size: int = 100,
-        exclude_types: List[str] = None
+        exclude_types: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         处理未处理的新闻
@@ -64,7 +64,7 @@ class NewsProcessingTask:
             news_ids = [news["id"] for news in news_list]
             await self.news_service.update_news_status(
                 news_ids=news_ids,
-                status=ProcessingStage.PROCESSING
+                stage="processing"
             )
             
             # 记录处理进度
@@ -92,7 +92,7 @@ class NewsProcessingTask:
                     # 更新单个新闻的错误状态
                     await self.news_service.update_news_status(
                         news_ids=[news["id"]],
-                        status=ProcessingStage.FAILED,
+                        stage="failed",
                         error_message=str(e)
                     )
                 
@@ -117,7 +117,7 @@ class NewsProcessingTask:
             if success_news_ids:
                 await self.news_service.update_news_status(
                     news_ids=success_news_ids,
-                    status=ProcessingStage.COMPLETED
+                    stage="completed"
                 )
             
             # 记录最终进度
@@ -200,7 +200,7 @@ class EventAggregationTask:
             # 过滤出已完成处理的新闻
             completed_news = [
                 news for news in news_list 
-                if news.get("processing_status") == ProcessingStage.COMPLETED.value
+                if news.get("processing_status") == "completed"
             ]
             
             if not completed_news:
@@ -221,6 +221,7 @@ class EventAggregationTask:
             
             events_created = 0
             news_aggregated = 0
+            created_event_ids = []  # 收集所有创建的事件ID
             
             # 创建事件并关联新闻
             for event_data in aggregation_results:
@@ -233,6 +234,8 @@ class EventAggregationTask:
                         confidence=event_data.get("confidence", 0.0),
                         event_type="自动聚合"
                     )
+                    
+                    created_event_ids.append(event_id)  # 收集事件ID
                     
                     # 关联新闻到事件
                     news_ids = event_data.get("news_ids", [])
@@ -256,9 +259,9 @@ class EventAggregationTask:
                     continue
             
             # 检查历史事件关联
-            if events_created > 0:
+            if created_event_ids:
                 await self._check_historical_relations(
-                    new_event_ids=[event_id],  # 这里应该收集所有新创建的事件ID
+                    new_event_ids=created_event_ids,
                     lookback_days=lookback_days
                 )
             

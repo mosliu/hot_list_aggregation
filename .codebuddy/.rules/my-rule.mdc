@@ -1,0 +1,13 @@
+---
+description: 
+globs:
+alwaysApply: true
+---
+# my-rule
+
+这是一个规则文件，用于帮助 AI 理解您的代码库和遵循项目约定。
+1. 积极使用sequential-thinking mcp 做任务的规划分解
+2. 除了readme.md 以外的文档编写，都放在docs目录下
+3. 测试功能的脚本，都放在test_script目录下
+4. 你执行的任务，应记得更新相应的文档
+5. 应积极进行注释，并且记得要对错误进行处理，处理时输出内容请详细

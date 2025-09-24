@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional, Dict, Any
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, JSON
+from sqlalchemy import Column, Integer, String, Text, DateTime
 
 from database.base import Base
 
@@ -11,7 +11,7 @@ from database.base import Base
 class ProcessingLog(Base):
     """处理日志表"""
     
-    __tablename__ = "processing_logs"
+    __tablename__ = "hot_aggr_processing_logs"
     
     id = Column(Integer, primary_key=True, autoincrement=True, comment="日志主键")
     task_type = Column(String(50), nullable=False, comment="任务类型")
@@ -23,7 +23,7 @@ class ProcessingLog(Base):
     success_count = Column(Integer, default=0, comment="成功数量")
     failed_count = Column(Integer, default=0, comment="失败数量")
     error_message = Column(Text, comment="错误信息")
-    config_snapshot = Column(JSON, comment="配置快照")
+    config_snapshot = Column(Text, comment="配置快照")
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, comment="创建时间")
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
     

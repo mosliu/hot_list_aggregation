@@ -40,7 +40,7 @@ class HotNewsBase(Base):
 class NewsProcessingStatus(Base):
     """新闻处理状态表"""
     
-    __tablename__ = "news_processing_status"
+    __tablename__ = "hot_aggr_news_processing_status"
     
     id = Column(Integer, primary_key=True, autoincrement=True, comment="状态主键")
     news_id = Column(Integer, ForeignKey("hot_news_base.id", ondelete="CASCADE"), unique=True, nullable=False, comment="新闻ID")
