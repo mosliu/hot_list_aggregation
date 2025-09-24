@@ -36,7 +36,7 @@ hot_list_aggregation/
 ├── services/            # 业务服务层
 ├── scheduler/           # 任务调度
 ├── utils/               # 工具模块
-├── docs/                # 文档
+├── docs/                # 📚 项目文档
 ├── main.py              # 主程序入口
 ├── pyproject.toml       # 项目配置
 ├── .env.example         # 环境变量示例
@@ -146,6 +146,8 @@ MAX_CONCURRENT_REQUESTS=5
 - **标签分析任务**: 每小时执行，分析事件标签
 - **数据清理任务**: 每天凌晨2点执行，清理过期数据
 
+📖 **详细的定时任务执行流程请参考**: [定时任务执行流程文档](docs/scheduler_workflow.md)
+
 ## 数据库设计
 
 ### 核心表结构
@@ -157,7 +159,7 @@ MAX_CONCURRENT_REQUESTS=5
 - `event_history_relations`: 事件历史关联表
 - `processing_logs`: 处理日志表
 
-详细DDL请参考 `database_design.sql`
+详细DDL请参考 `docs/database_design_final.sql`
 
 ## 开发指南
 
@@ -244,6 +246,19 @@ MAX_CONCURRENT_REQUESTS=5
 ## 许可证
 
 本项目采用MIT许可证，详见LICENSE文件。
+
+## 📚 文档导航
+
+本项目提供了完整的技术文档，所有文档都位于 `docs/` 目录中：
+
+- **[📋 文档索引](docs/README.md)** - 完整的文档导航和索引
+- **[⚙️ 定时任务流程](docs/scheduler_workflow.md)** - 详细的任务调度和执行流程
+- **[📋 项目需求](docs/PROJECT_REQUIREMENTS.md)** - 功能需求和技术规范
+- **[📊 项目总结](docs/PROJECT_SUMMARY.md)** - 项目概述和特性说明
+- **[🤖 智能体配置](docs/AGENTS.md)** - AI智能体配置说明
+- **[🗄️ 数据库设计](docs/database_design_final.sql)** - 完整的数据库结构
+
+💡 **建议新用户先阅读**: [项目总结](docs/PROJECT_SUMMARY.md) → [定时任务流程](docs/scheduler_workflow.md)
 
 ## 联系方式
 
