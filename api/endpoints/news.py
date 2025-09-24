@@ -137,53 +137,6 @@ async def get_recent_news_by_keywords(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.patch("/batch-update-type")
-async def batch_update_news_type(
-    news_ids: List[int],
-    news_type: str = Query(..., description="新闻类型")
-):
-    """批量更新新闻类型"""
-    try:
-        if not news_ids:
-            raise HTTPException(status_code=400, detail="新闻ID列表不能为空")
-        
-        updated_count = await news_service.batch_update_news_type(news_ids, news_type)
-        return {
-            "message": f"成功更新 {updated_count} 条新闻的类型",
-            "updated_count": updated_count,
-            "news_type": news_type
-        }
-        
-    except Exception as e:
-        logger.error(f"批量更新新闻类型失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/baidu/since-last-fetch", response_model=List[NewsResponse])
-async def get_baidu_news_since_last_fetch():
-    """获取所有type='baidu'的数据从上次获取到现在"""
-    try:
-        news_list = await news_service.get_baidu_news_since_last_fetch()
-        
-        return [
-            NewsResponse(
-                id=news["id"],
-                title=news["title"],
-                desc=news.get("desc") or "",
-                url=news.get("url") or "",
-                source=news.get("type") or "",  # 使用type作为source
-                news_type=news.get("type") or "",
-                processing_status=news.get("processing_status") or "pending",
-                created_at=news["first_add_time"].isoformat() if news.get("first_add_time") else "",
-                updated_at=news["last_update_time"].isoformat() if news.get("last_update_time") else ""
-            )
-            for news in news_list
-        ]
-        
-    except Exception as e:
-        logger.error(f"获取百度新闻失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 @router.patch("/status")
 async def update_news_status(

@@ -26,11 +26,14 @@ async def test_baidu_news_fetch():
     news_service = NewsService()
     
     try:
-        # 1. 测试获取百度新闻从上次获取到现在
-        print("\n1. 测试获取百度新闻从上次获取到现在")
+        # 1. 测试获取百度类型的未处理新闻
+        print("\n1. 测试获取百度类型的未处理新闻")
         print("-" * 40)
         
-        baidu_news = await news_service.get_baidu_news_since_last_fetch()
+        baidu_news = await news_service.get_unprocessed_news(
+            limit=50,
+            include_types=['baidu']
+        )
         print(f"获取到 {len(baidu_news)} 条百度新闻")
         
         if baidu_news:
@@ -116,9 +119,9 @@ async def test_api_endpoints():
         print(f"状态码: {response.status_code}")
         print(f"响应: {response.json()}")
         
-        # 测试获取百度新闻
-        print("\n2. 测试获取百度新闻")
-        response = requests.get(f"{base_url}/baidu/since-last-fetch")
+        # 测试获取未处理新闻（百度类型）
+        print("\n2. 测试获取未处理新闻（百度类型）")
+        response = requests.get(f"{base_url}/unprocessed?include_types=baidu&limit=10")
         print(f"状态码: {response.status_code}")
         if response.status_code == 200:
             data = response.json()

@@ -31,10 +31,13 @@ async def test_scheduler_fix():
         
         news_service = NewsService()
         
-        # 获取一些测试新闻ID
-        baidu_news = await news_service.get_baidu_news_since_last_fetch()
-        if baidu_news:
-            test_ids = [news['id'] for news in baidu_news[:3]]
+        # 获取一些测试新闻ID（使用未处理新闻）
+        unprocessed_news = await news_service.get_unprocessed_news(
+            limit=5,
+            include_types=['baidu']
+        )
+        if unprocessed_news:
+            test_ids = [news['id'] for news in unprocessed_news[:3]]
             print(f"测试新闻ID: {test_ids}")
             
             # 测试更新状态
@@ -52,7 +55,7 @@ async def test_scheduler_fix():
             )
             print(f"更新错误状态结果: {'成功' if success else '失败'}")
         else:
-            print("没有找到百度新闻进行测试")
+            print("没有找到未处理的百度新闻进行测试")
         
         # 2. 测试NewsProcessingTasks初始化
         print("\n2. 测试NewsProcessingTasks初始化")
