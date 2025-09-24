@@ -1,0 +1,21 @@
+CREATE TABLE `hot_news_base` (
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `type` char(20) CHARACTER SET utf8 DEFAULT NULL COMMENT '"baidu"百度风云榜 "weixin_reci"微信热搜 "weibo" 实时热点  "weibo_realtimehot" 热搜榜 "weibo_socialevent" 新时代 "qq"',
+  `url` varchar(500) CHARACTER SET utf8 DEFAULT NULL,
+  `url_md5` varchar(32) CHARACTER SET utf8 DEFAULT NULL,
+  `title` varchar(255) DEFAULT NULL,
+  `desc` varchar(255) DEFAULT NULL COMMENT '导语或摘要',
+  `content` text,
+  `city_name` varchar(100) DEFAULT NULL,
+  `first_add_time` datetime NOT NULL DEFAULT '0000-00-00 00:00:00' COMMENT '首次添加时间',
+  `last_update_time` datetime NOT NULL DEFAULT '0000-00-00 00:00:00' COMMENT '最后更新时间',
+  `highest_rank` int(11) DEFAULT NULL COMMENT '最高排名',
+  `lowest_rank` int(11) DEFAULT NULL COMMENT '最低排名',
+  `latest_rank` int(11) DEFAULT NULL COMMENT '最新排名',
+  `highest_hot_num` varchar(100) DEFAULT NULL COMMENT '最高热点值',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `url_md5` (`url_md5`) USING BTREE,
+  KEY `type` (`type`),
+  KEY `first_add_time` (`first_add_time`),
+  KEY `last_update_time` (`last_update_time`)
+) ENGINE=InnoDB AUTO_INCREMENT=394685 DEFAULT CHARSET=utf8mb4 COMMENT='热点新闻基础信息表';
