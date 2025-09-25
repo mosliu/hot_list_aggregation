@@ -56,3 +56,11 @@ class DatabaseManager:
 def get_db_session():
     """获取数据库会话的便捷函数"""
     return DatabaseManager.get_session()
+
+def get_db():
+    """获取数据库会话（兼容性函数）"""
+    return DatabaseManager.get_session()
+
+async def get_async_db():
+    """异步获取数据库会话"""
+    return DatabaseManager.get_session()

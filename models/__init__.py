@@ -1,15 +1,11 @@
 """数据模型模块"""
 
-from .news import HotNewsBase, NewsProcessingStatus
-from .events import Event, NewsEventRelation, EventLabel, EventHistoryRelation
-from .logs import ProcessingLog
+from .news_new import HotNewsBase, NewsEventRelation
+from .events_new import Event, ProcessingLog
 
 __all__ = [
     "HotNewsBase",
-    "NewsProcessingStatus", 
-    "Event",
     "NewsEventRelation",
-    "EventLabel",
-    "EventHistoryRelation",
+    "Event", 
     "ProcessingLog"
 ]
