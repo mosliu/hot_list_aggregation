@@ -232,7 +232,7 @@ async def main():
         # 根据模式执行不同的处理流程
         if mode == "incremental":
             # 默认处理baidu和douyin_hot两种类型
-            result = await run_incremental_process(hours=1)
+            result = await run_incremental_process(hours=24)
         elif mode == "daily":
             result = await run_daily_process()
         elif mode == "custom":

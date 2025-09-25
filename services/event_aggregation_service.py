@@ -387,6 +387,40 @@ class EventAggregationService:
                     processed_count += len(news_ids)
                     logger.info(f"创建新事件 {event.id}，包含 {len(news_ids)} 条新闻")
                 
+                # 处理未聚合的新闻 - 创建特殊的"未分类"事件
+                unprocessed_news_ids = result.get('unprocessed_news', [])
+                if unprocessed_news_ids:
+                    logger.info(f"处理未聚合新闻数量: {len(unprocessed_news_ids)}")
+                    
+                    # 创建未分类事件
+                    unclassified_event = HotAggrEvent(
+                        title="未分类新闻",
+                        description="无法聚合到现有事件的新闻",
+                        event_type="unclassified",
+                        regions="",
+                        keywords="",
+                        confidence_score=0.5,
+                        created_at=datetime.now(),
+                        updated_at=datetime.now()
+                    )
+                    
+                    db.add(unclassified_event)
+                    db.flush()  # 获取事件ID
+                    
+                    # 为未聚合的新闻创建关系记录
+                    for news_id in unprocessed_news_ids:
+                        relation = HotAggrNewsEventRelation(
+                            news_id=news_id,
+                            event_id=unclassified_event.id,
+                            relation_type='未分类',
+                            confidence_score=0.5,
+                            created_at=datetime.now()
+                        )
+                        db.add(relation)
+                    
+                    processed_count += len(unprocessed_news_ids)
+                    logger.info(f"为 {len(unprocessed_news_ids)} 条未聚合新闻创建了未分类事件 {unclassified_event.id}")
+                
                 db.commit()
                 
         except Exception as e:

@@ -9,7 +9,7 @@ import json_repair
 import hashlib
 import os
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Callable, Tuple
+from typing import List, Dict, Any, Optional, Callable, Tuple, Set
 from datetime import datetime
 import openai
 from loguru import logger
@@ -215,16 +215,35 @@ class LLMWrapper:
                 logger.error(f"大模型返回结果解析失败: {e}, 原始响应: {response}")
                 return None
             
-            # 验证结果
-            if validation_func and not validation_func(news_batch, result):
-                logger.error(f"结果验证失败，新闻ID: {news_ids}")
-                return None
+            # 验证结果并处理部分失败的情况
+            if validation_func:
+                if hasattr(self, 'validate_and_fix_aggregation_result'):
+                    # 使用新的验证逻辑
+                    validation_result = self.validate_and_fix_aggregation_result(news_batch, result)
+                    if not validation_result['is_valid']:
+                        if validation_result['fixed_result']:
+                            # 有部分有效结果，返回修复后的结果和遗漏的新闻
+                            logger.warning(f"批次部分验证失败: {validation_result['message']}")
+                            return {
+                                'result': validation_result['fixed_result'],
+                                'missing_news': validation_result['missing_news'],
+                                'partial_success': True
+                            }
+                        else:
+                            # 完全失败
+                            logger.error(f"批次验证完全失败: {validation_result['message']}")
+                            return None
+                else:
+                    # 使用旧的验证逻辑（向后兼容）
+                    if not validation_func(news_batch, result):
+                        logger.error(f"结果验证失败，新闻ID: {news_ids}")
+                        return None
             
             # 缓存结果
             cache_service.cache_llm_result(news_ids, result)
             
             logger.info(f"批次处理成功，新闻数量: {len(news_batch)}")
-            return result
+            return {'result': result, 'missing_news': [], 'partial_success': False}
             
         except Exception as e:
             logger.error(f"批次处理异常: {e}")
@@ -324,6 +343,7 @@ class LLMWrapper:
         # 处理结果
         success_results = []
         failed_news = []
+        retry_news = []  # 需要重新处理的新闻
         
         for result in results:
             if isinstance(result, Exception):
@@ -331,25 +351,70 @@ class LLMWrapper:
                 continue
                 
             batch_index, batch, llm_result = result
-            if llm_result:
-                success_results.append(llm_result)
-            else:
+            if llm_result is None:
                 failed_news.extend(batch)
                 logger.warning(f"批次 {batch_index + 1} 处理失败，新闻数量: {len(batch)}")
+            elif isinstance(llm_result, dict) and llm_result.get('partial_success'):
+                # 部分成功的情况
+                logger.info(f"批次 {batch_index + 1} 部分成功，保存有效结果，重新处理遗漏新闻")
+                success_results.append(llm_result['result'])
+                retry_news.extend(llm_result['missing_news'])
+            else:
+                # 完全成功的情况
+                if isinstance(llm_result, dict) and 'result' in llm_result:
+                    success_results.append(llm_result['result'])
+                else:
+                    success_results.append(llm_result)
         
-        logger.info(f"并发处理完成，成功批次: {len(success_results)}, 失败新闻: {len(failed_news)}")
+        # 处理需要重新处理的新闻
+        if retry_news:
+            logger.info(f"重新处理遗漏的新闻: {len(retry_news)} 条")
+            # 使用较小的批次大小重新处理
+            retry_batch_size = max(1, current_batch_size // 2)
+            retry_batches = [
+                retry_news[i:i + retry_batch_size] 
+                for i in range(0, len(retry_news), retry_batch_size)
+            ]
+            
+            # 重新处理遗漏的新闻
+            for retry_batch in retry_batches:
+                try:
+                    retry_result = await self.process_batch(
+                        retry_batch, recent_events, prompt_template, validation_func
+                    )
+                    if retry_result and not isinstance(retry_result, dict):
+                        success_results.append(retry_result)
+                    elif isinstance(retry_result, dict) and retry_result.get('result'):
+                        success_results.append(retry_result['result'])
+                        # 如果还有遗漏，加入失败列表
+                        if retry_result.get('missing_news'):
+                            failed_news.extend(retry_result['missing_news'])
+                    else:
+                        failed_news.extend(retry_batch)
+                except Exception as e:
+                    logger.error(f"重新处理批次异常: {e}")
+                    failed_news.extend(retry_batch)
+        
+        logger.info(f"并发处理完成，成功批次: {len(success_results)}, 失败新闻: {len(failed_news)}, 重新处理: {len(retry_news)}")
         return success_results, failed_news
     
-    def validate_aggregation_result(self, news_batch: List[Dict], result: Dict) -> bool:
+    def validate_and_fix_aggregation_result(self, news_batch: List[Dict], result: Dict) -> Dict:
         """
-        验证事件聚合结果
+        验证并修复事件聚合结果
         
         Args:
             news_batch: 输入的新闻批次
             result: 大模型返回的结果
             
         Returns:
-            bool: 验证是否通过
+            Dict: 包含验证状态和修复后结果的字典
+            {
+                'is_valid': bool,
+                'fixed_result': Dict,
+                'missing_news': List[Dict],
+                'extra_ids': Set[int],
+                'message': str
+            }
         """
         try:
             # 检查必要字段
@@ -357,10 +422,17 @@ class LLMWrapper:
             for field in required_fields:
                 if field not in result:
                     logger.error(f"结果缺少必要字段: {field}")
-                    return False
+                    return {
+                        'is_valid': False,
+                        'fixed_result': None,
+                        'missing_news': news_batch,
+                        'extra_ids': set(),
+                        'message': f'结果缺少必要字段: {field}'
+                    }
             
             # 检查新闻ID是否完整
             input_news_ids = set(news['id'] for news in news_batch)
+            input_news_dict = {news['id']: news for news in news_batch}
             processed_news_ids = set()
             
             # 收集已处理的新闻ID
@@ -373,18 +445,99 @@ class LLMWrapper:
             processed_news_ids.update(result.get('unprocessed_news', []))
             
             # 检查是否有遗漏或多余的新闻ID
-            if input_news_ids != processed_news_ids:
-                missing = input_news_ids - processed_news_ids
-                extra = processed_news_ids - input_news_ids
-                logger.error(f"新闻ID不匹配，遗漏: {missing}, 多余: {extra}")
-                return False
+            missing_ids = input_news_ids - processed_news_ids
+            extra_ids = processed_news_ids - input_news_ids
             
-            logger.debug("结果验证通过")
-            return True
+            if not missing_ids and not extra_ids:
+                # 完全匹配，验证通过
+                logger.debug("结果验证通过")
+                return {
+                    'is_valid': True,
+                    'fixed_result': result,
+                    'missing_news': [],
+                    'extra_ids': set(),
+                    'message': '验证通过'
+                }
+            
+            # 部分不匹配，需要修复
+            logger.warning(f"新闻ID部分不匹配，遗漏: {missing_ids}, 多余: {extra_ids}")
+            
+            # 修复结果：移除多余的ID
+            fixed_result = self._remove_extra_ids_from_result(result, extra_ids)
+            
+            # 准备遗漏的新闻列表
+            missing_news = [input_news_dict[news_id] for news_id in missing_ids if news_id in input_news_dict]
+            
+            return {
+                'is_valid': len(missing_ids) == 0,  # 只有没有遗漏才算完全有效
+                'fixed_result': fixed_result,
+                'missing_news': missing_news,
+                'extra_ids': extra_ids,
+                'message': f'部分匹配，遗漏: {len(missing_ids)}, 多余: {len(extra_ids)}'
+            }
             
         except Exception as e:
             logger.error(f"结果验证异常: {e}")
-            return False
+            return {
+                'is_valid': False,
+                'fixed_result': None,
+                'missing_news': news_batch,
+                'extra_ids': set(),
+                'message': f'验证异常: {str(e)}'
+            }
+    
+    def _remove_extra_ids_from_result(self, result: Dict, extra_ids: Set[int]) -> Dict:
+        """
+        从结果中移除多余的新闻ID
+        
+        Args:
+            result: 原始结果
+            extra_ids: 多余的新闻ID集合
+            
+        Returns:
+            修复后的结果
+        """
+        fixed_result = result.copy()
+        
+        # 修复existing_events
+        fixed_existing_events = []
+        for event in result.get('existing_events', []):
+            valid_news_ids = [nid for nid in event.get('news_ids', []) if nid not in extra_ids]
+            if valid_news_ids:  # 只保留有有效新闻ID的事件
+                event_copy = event.copy()
+                event_copy['news_ids'] = valid_news_ids
+                fixed_existing_events.append(event_copy)
+        fixed_result['existing_events'] = fixed_existing_events
+        
+        # 修复new_events
+        fixed_new_events = []
+        for event in result.get('new_events', []):
+            valid_news_ids = [nid for nid in event.get('news_ids', []) if nid not in extra_ids]
+            if valid_news_ids:  # 只保留有有效新闻ID的事件
+                event_copy = event.copy()
+                event_copy['news_ids'] = valid_news_ids
+                fixed_new_events.append(event_copy)
+        fixed_result['new_events'] = fixed_new_events
+        
+        # 修复unprocessed_news
+        fixed_unprocessed = [nid for nid in result.get('unprocessed_news', []) if nid not in extra_ids]
+        fixed_result['unprocessed_news'] = fixed_unprocessed
+        
+        return fixed_result
+    
+    def validate_aggregation_result(self, news_batch: List[Dict], result: Dict) -> bool:
+        """
+        验证事件聚合结果（保持向后兼容性）
+        
+        Args:
+            news_batch: 输入的新闻批次
+            result: 大模型返回的结果
+            
+        Returns:
+            bool: 验证是否通过
+        """
+        validation_result = self.validate_and_fix_aggregation_result(news_batch, result)
+        return validation_result['is_valid']
 
 
 # 全局LLM包装器实例
