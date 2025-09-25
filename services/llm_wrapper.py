@@ -5,6 +5,10 @@
 
 import asyncio
 import json
+import json_repair
+import hashlib
+import os
+from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable, Tuple
 from datetime import datetime
 import openai
@@ -22,9 +26,70 @@ class LLMWrapper:
             api_key=settings.OPENAI_API_KEY,
             base_url=settings.OPENAI_BASE_URL
         )
-        self.batch_size = settings.LLM_BATCH_SIZE
-        self.max_concurrent = settings.LLM_MAX_CONCURRENT
-        self.retry_times = settings.LLM_RETRY_TIMES
+        self.batch_size = settings.EVENT_AGGREGATION_BATCH_SIZE
+        self.max_concurrent = settings.EVENT_AGGREGATION_MAX_CONCURRENT
+        self.retry_times = settings.EVENT_AGGREGATION_RETRY_TIMES
+        
+        # 调试模式配置
+        self.debug_mode = False
+        self.debug_dir = Path("docs/debug/llm_requests")
+        self.debug_dir.mkdir(parents=True, exist_ok=True)
+        
+    def enable_debug_mode(self, enabled: bool = True):
+        """启用或禁用调试模式"""
+        self.debug_mode = enabled
+        if enabled:
+            logger.info("LLM调试模式已启用，请求和响应将被记录")
+        else:
+            logger.info("LLM调试模式已禁用")
+    
+    def _generate_request_hash(self, prompt: str, model: str, temperature: float, max_tokens: int) -> str:
+        """生成请求的唯一哈希值"""
+        request_data = f"{prompt}|{model}|{temperature}|{max_tokens}"
+        return hashlib.md5(request_data.encode('utf-8')).hexdigest()
+    
+    def _save_debug_data(self, request_hash: str, prompt: str, response: str, model: str, temperature: float, max_tokens: int):
+        """保存调试数据到文件"""
+        if not self.debug_mode:
+            return
+            
+        debug_data = {
+            "timestamp": datetime.now().isoformat(),
+            "request_hash": request_hash,
+            "request": {
+                "prompt": prompt,
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens
+            },
+            "response": response
+        }
+        
+        debug_file = self.debug_dir / f"{request_hash}.json"
+        try:
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                json.dump(debug_data, f, ensure_ascii=False, indent=2)
+            logger.debug(f"调试数据已保存: {debug_file}")
+        except Exception as e:
+            logger.error(f"保存调试数据失败: {e}")
+    
+    def _load_debug_response(self, request_hash: str) -> Optional[str]:
+        """从调试文件加载响应"""
+        if not self.debug_mode:
+            return None
+            
+        debug_file = self.debug_dir / f"{request_hash}.json"
+        if not debug_file.exists():
+            return None
+            
+        try:
+            with open(debug_file, 'r', encoding='utf-8') as f:
+                debug_data = json.load(f)
+            logger.info(f"使用调试模式保存的响应: {request_hash}")
+            return debug_data.get("response")
+        except Exception as e:
+            logger.error(f"加载调试响应失败: {e}")
+            return None
         
     async def call_llm_single(
         self, 
@@ -46,12 +111,22 @@ class LLMWrapper:
             大模型响应内容
         """
         if not model:
-            model = settings.LLM_AGGREGATION_MODEL
+            model = settings.EVENT_AGGREGATION_MODEL
         if temperature is None:
-            temperature = settings.LLM_AGGREGATION_TEMPERATURE
+            temperature = settings.EVENT_AGGREGATION_TEMPERATURE
         if max_tokens is None:
-            max_tokens = settings.LLM_AGGREGATION_MAX_TOKENS
-            
+            max_tokens = settings.EVENT_AGGREGATION_MAX_TOKENS
+        
+        # 生成请求哈希
+        request_hash = self._generate_request_hash(prompt, model, temperature, max_tokens)
+        
+        # 调试模式：尝试加载保存的响应
+        if self.debug_mode:
+            saved_response = self._load_debug_response(request_hash)
+            if saved_response:
+                return saved_response
+        
+        # 实际调用大模型
         for attempt in range(self.retry_times):
             try:
                 response = await self.client.chat.completions.create(
@@ -63,8 +138,13 @@ class LLMWrapper:
                 
                 content = response.choices[0].message.content
                 if content:
+                    content = content.strip()
+                    
+                    # 保存调试数据
+                    self._save_debug_data(request_hash, prompt, content, model, temperature, max_tokens)
+                    
                     logger.debug(f"大模型调用成功，尝试次数: {attempt + 1}")
-                    return content.strip()
+                    return content
                 else:
                     logger.warning(f"大模型返回空内容，尝试次数: {attempt + 1}")
                     
@@ -121,7 +201,16 @@ class LLMWrapper:
                     cleaned_response = cleaned_response[:-3]  # 移除 ```
                 cleaned_response = cleaned_response.strip()
                 
-                result = json.loads(cleaned_response)
+                # 使用 json_repair 修复可能损坏的 JSON
+                try:
+                    repaired_json = json_repair.repair_json(cleaned_response)
+                    result = json.loads(repaired_json)
+                    logger.debug("使用 json_repair 成功修复并解析 JSON")
+                except Exception as repair_error:
+                    logger.warning(f"json_repair 修复失败: {repair_error}，尝试直接解析")
+                    # 如果 json_repair 失败，尝试直接解析
+                    result = json.loads(cleaned_response)
+                    
             except json.JSONDecodeError as e:
                 logger.error(f"大模型返回结果解析失败: {e}, 原始响应: {response}")
                 return None
@@ -202,8 +291,8 @@ class LLMWrapper:
         Returns:
             (成功结果列表, 失败的新闻列表)
         """
-        # 分批处理 - 使用当前设置的批次大小
-        current_batch_size = settings.LLM_BATCH_SIZE
+        # 分批处理 - 使用事件聚合专用的批次大小
+        current_batch_size = settings.EVENT_AGGREGATION_BATCH_SIZE
         batches = [
             news_list[i:i + current_batch_size] 
             for i in range(0, len(news_list), current_batch_size)

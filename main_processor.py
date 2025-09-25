@@ -19,7 +19,7 @@ async def run_full_process(
     add_time_end: datetime,
     news_type: Optional[str] = None,
     show_progress: bool = True
-) -> dict:
+) -> dict:  # pyright: ignore[reportMissingTypeArgument]
     """
     执行完整的事件聚合流程
     
@@ -39,9 +39,9 @@ async def run_full_process(
     logger.info(f"处理参数:")
     logger.info(f"  时间范围: {add_time_start} ~ {add_time_end}")
     logger.info(f"  新闻类型: {news_type or '全部'}")
-    logger.info(f"  大模型: {settings.LLM_AGGREGATION_MODEL}")
-    logger.info(f"  批处理大小: {settings.LLM_BATCH_SIZE}")
-    logger.info(f"  并发数: {settings.LLM_MAX_CONCURRENT}")
+    logger.info(f"  大模型: {settings.EVENT_AGGREGATION_MODEL}")
+    logger.info(f"  批处理大小: {settings.EVENT_AGGREGATION_BATCH_SIZE}")
+    logger.info(f"  并发数: {settings.EVENT_AGGREGATION_MAX_CONCURRENT}")
     
     # 进度回调函数
     def progress_callback(current_batch: int, total_batches: int, batch_size: int):
@@ -84,7 +84,7 @@ async def run_full_process(
         }
 
 
-async def run_incremental_process(hours: int = 1) -> dict:
+async def run_incremental_process(hours: int = 24) -> dict:
     """
     运行增量处理流程（处理最近N小时的数据）
     
@@ -102,7 +102,9 @@ async def run_incremental_process(hours: int = 1) -> dict:
     return await run_full_process(
         add_time_start=start_time,
         add_time_end=end_time,
-        show_progress=True
+        show_progress=True,
+        news_type="baidu"
+
     )
 
 

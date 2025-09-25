@@ -55,7 +55,15 @@ class Settings(BaseSettings):
     LLM_MAX_CONCURRENT: int = Field(default=3, description="大模型最大并发数")
     LLM_RETRY_TIMES: int = Field(default=3, description="大模型重试次数")
     
-    # 事件聚合配置
+    # 事件聚合专用配置
+    EVENT_AGGREGATION_MODEL: str = Field(default="gpt-3.5-turbo", description="事件聚合专用模型")
+    EVENT_AGGREGATION_TEMPERATURE: float = Field(default=0.1, description="事件聚合温度参数")
+    EVENT_AGGREGATION_MAX_TOKENS: int = Field(default=4000, description="事件聚合最大token数")
+    EVENT_AGGREGATION_BATCH_SIZE: int = Field(default=3, description="事件聚合批处理大小")
+    EVENT_AGGREGATION_MAX_CONCURRENT: int = Field(default=2, description="事件聚合最大并发数")
+    EVENT_AGGREGATION_RETRY_TIMES: int = Field(default=3, description="事件聚合重试次数")
+    
+    # 事件聚合流程配置
     RECENT_EVENTS_COUNT: int = Field(default=50, description="获取最近事件数量")
     EVENT_SUMMARY_DAYS: int = Field(default=7, description="事件摘要天数范围")
     AGGREGATION_CONFIDENCE_THRESHOLD: float = Field(default=0.7, description="聚合置信度阈值")
