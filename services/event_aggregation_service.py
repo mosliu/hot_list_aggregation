@@ -4,7 +4,7 @@
 """
 
 import asyncio
-from typing import List, Dict, Optional, Tuple, Callable
+from typing import List, Dict, Optional, Tuple, Callable, Union
 from datetime import datetime, timedelta
 from loguru import logger
 from sqlalchemy.orm import Session
@@ -31,7 +31,7 @@ class EventAggregationService:
         self,
         add_time_start: Optional[datetime] = None,
         add_time_end: Optional[datetime] = None,
-        news_type: Optional[str] = None,
+        news_type: Optional[Union[str, List[str]]] = None,
         batch_size: Optional[int] = None,
         progress_callback: Optional[Callable] = None
     ) -> Dict:
@@ -73,7 +73,23 @@ class EventAggregationService:
             recent_events = await self._get_recent_events()
             logger.info(f"获取到最近事件 {len(recent_events)} 个")
             
-            # 3. 调用大模型进行聚合
+            # 3. 获取已处理新闻关联的事件
+            processed_news_events = self._get_events_from_processed_news(
+                add_time_start, add_time_end, news_type
+            )
+            
+            # 4. 合并事件列表，避免重复
+            all_events = recent_events.copy()
+            existing_event_ids = {event['id'] for event in recent_events}
+            
+            for event in processed_news_events:
+                if event['id'] not in existing_event_ids:
+                    all_events.append(event)
+                    existing_event_ids.add(event['id'])
+            
+            logger.info(f"合并后总事件数: {len(all_events)} 个（最近事件: {len(recent_events)}, 已处理新闻事件: {len(processed_news_events)}）")
+            
+            # 5. 调用大模型进行聚合
             # 如果指定了批次大小，临时修改设置
             original_batch_size = None
             if batch_size:
@@ -84,7 +100,7 @@ class EventAggregationService:
             try:
                 success_results, failed_news = await llm_wrapper.process_news_concurrent(
                     news_list=news_list,
-                    recent_events=recent_events,
+                    recent_events=all_events,  # 使用合并后的事件列表
                     prompt_template=prompt_templates.get_template('event_aggregation'),
                     validation_func=llm_wrapper.validate_aggregation_result,
                     progress_callback=progress_callback
@@ -94,13 +110,13 @@ class EventAggregationService:
                 if original_batch_size is not None:
                     settings.LLM_BATCH_SIZE = original_batch_size
             
-            # 4. 处理聚合结果
+            # 6. 处理聚合结果
             processed_count = 0
             for result in success_results:
                 count = await self._process_aggregation_result(result)
                 processed_count += count
             
-            # 5. 统计结果
+            # 7. 统计结果
             duration = (datetime.now() - start_time).total_seconds()
             result_stats = {
                 'status': 'success',
@@ -130,7 +146,7 @@ class EventAggregationService:
         self,
         add_time_start: Optional[datetime] = None,
         add_time_end: Optional[datetime] = None,
-        news_type: Optional[str] = None
+        news_type: Optional[Union[str, List[str]]] = None
     ) -> List[Dict]:
         """
         获取待处理的新闻
@@ -138,14 +154,20 @@ class EventAggregationService:
         Args:
             add_time_start: 开始时间
             add_time_end: 结束时间
-            news_type: 新闻类型
+            news_type: 新闻类型，可以是单个字符串或字符串列表
             
         Returns:
             新闻列表
         """
         try:
             with get_db_session() as db:
-                query = db.query(HotNewsBase)
+                # 使用LEFT JOIN排除已处理的新闻
+                query = db.query(HotNewsBase).outerjoin(
+                    HotAggrNewsEventRelation, 
+                    HotNewsBase.id == HotAggrNewsEventRelation.news_id
+                ).filter(
+                    HotAggrNewsEventRelation.news_id.is_(None)  # 只获取未处理的新闻
+                )
                 
                 # 添加时间条件
                 if add_time_start:
@@ -155,10 +177,17 @@ class EventAggregationService:
                 
                 # 添加类型条件
                 if news_type:
-                    query = query.filter(HotNewsBase.type == news_type)
+                    if isinstance(news_type, str):
+                        # 单个类型
+                        query = query.filter(HotNewsBase.type == news_type)
+                    elif isinstance(news_type, list) and news_type:
+                        # 多个类型，使用IN查询
+                        query = query.filter(HotNewsBase.type.in_(news_type))
                 
                 # 排序并获取结果
                 news_records = query.order_by(desc(HotNewsBase.first_add_time)).all()
+                
+                logger.info(f"获取到未处理新闻 {len(news_records)} 条")
                 
                 # 转换为字典格式
                 news_list = []
@@ -179,6 +208,73 @@ class EventAggregationService:
                 
         except Exception as e:
             logger.error(f"获取待处理新闻失败: {e}")
+            return []
+    
+    def _get_events_from_processed_news(
+        self,
+        add_time_start: Optional[datetime] = None,
+        add_time_end: Optional[datetime] = None,
+        news_type: Optional[Union[str, List[str]]] = None
+    ) -> List[Dict]:
+        """
+        获取时间范围内已处理新闻关联的事件
+        
+        Args:
+            add_time_start: 开始时间
+            add_time_end: 结束时间
+            news_type: 新闻类型，可以是单个字符串或字符串列表
+            
+        Returns:
+            事件列表
+        """
+        try:
+            with get_db_session() as db:
+                # 查询已处理新闻关联的事件
+                query = db.query(HotAggrEvent).join(
+                    HotAggrNewsEventRelation,
+                    HotAggrEvent.id == HotAggrNewsEventRelation.event_id
+                ).join(
+                    HotNewsBase,
+                    HotAggrNewsEventRelation.news_id == HotNewsBase.id
+                )
+                
+                # 添加时间条件
+                if add_time_start:
+                    query = query.filter(HotNewsBase.first_add_time >= add_time_start)
+                if add_time_end:
+                    query = query.filter(HotNewsBase.first_add_time <= add_time_end)
+                
+                # 添加类型条件
+                if news_type:
+                    if isinstance(news_type, str):
+                        query = query.filter(HotNewsBase.type == news_type)
+                    elif isinstance(news_type, list) and news_type:
+                        query = query.filter(HotNewsBase.type.in_(news_type))
+                
+                # 去重并获取结果
+                events = query.distinct().all()
+                
+                logger.info(f"获取到已处理新闻关联的事件 {len(events)} 个")
+                
+                # 转换为字典格式
+                event_list = []
+                for event in events:
+                    event_dict = {
+                        'id': event.id,
+                        'title': event.title or '',
+                        'summary': event.description or '',
+                        'event_type': event.event_type or '',
+                        'region': event.regions or '',
+                        'tags': event.keywords.split(',') if event.keywords else [],
+                        'created_at': event.created_at.strftime('%Y-%m-%d %H:%M:%S') if event.created_at else '',
+                        'priority': 'medium'
+                    }
+                    event_list.append(event_dict)
+                
+                return event_list
+                
+        except Exception as e:
+            logger.error(f"获取已处理新闻关联事件失败: {e}")
             return []
     
     async def _get_recent_events(self) -> List[Dict]:
@@ -208,12 +304,12 @@ class EventAggregationService:
                     event_dict = {
                         'id': event.id,
                         'title': event.title or '',
-                        'summary': event.summary or '',
+                        'summary': event.description or '',  # 使用 description 字段
                         'event_type': event.event_type or '',
-                        'region': event.region or '',
-                        'tags': event.tags.split(',') if event.tags else [],
+                        'region': event.regions or '',  # 使用 regions 字段
+                        'tags': event.keywords.split(',') if event.keywords else [],  # 使用 keywords 字段
                         'created_at': event.created_at.strftime('%Y-%m-%d %H:%M:%S') if event.created_at else '',
-                        'priority': event.priority or 'medium'
+                        'priority': 'medium'  # 模型中没有 priority 字段，设置默认值
                     }
                     event_list.append(event_dict)
                 

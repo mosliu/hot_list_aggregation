@@ -7,7 +7,7 @@
 import asyncio
 import sys
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List, Union
 
 from loguru import logger
 from config.settings_new import settings
@@ -17,7 +17,7 @@ from services.event_aggregation_service import event_aggregation_service
 async def run_full_process(
     add_time_start: datetime,
     add_time_end: datetime,
-    news_type: Optional[str] = None,
+    news_type: Optional[Union[str, List[str]]] = None,
     show_progress: bool = True
 ) -> dict:  # pyright: ignore[reportMissingTypeArgument]
     """
@@ -26,7 +26,7 @@ async def run_full_process(
     Args:
         add_time_start: 开始时间
         add_time_end: 结束时间
-        news_type: 新闻类型过滤
+        news_type: 新闻类型过滤，可以是单个字符串或字符串列表
         show_progress: 是否显示进度
         
     Returns:
@@ -36,9 +36,15 @@ async def run_full_process(
     logger.info("开始执行事件聚合主流程")
     logger.info("=" * 60)
     
+    # 格式化新闻类型显示
+    if isinstance(news_type, list):
+        news_type_display = f"[{', '.join(news_type)}]"
+    else:
+        news_type_display = news_type or '全部'
+    
     logger.info(f"处理参数:")
     logger.info(f"  时间范围: {add_time_start} ~ {add_time_end}")
-    logger.info(f"  新闻类型: {news_type or '全部'}")
+    logger.info(f"  新闻类型: {news_type_display}")
     logger.info(f"  大模型: {settings.EVENT_AGGREGATION_MODEL}")
     logger.info(f"  批处理大小: {settings.EVENT_AGGREGATION_BATCH_SIZE}")
     logger.info(f"  并发数: {settings.EVENT_AGGREGATION_MAX_CONCURRENT}")
@@ -84,27 +90,46 @@ async def run_full_process(
         }
 
 
-async def run_incremental_process(hours: int = 24) -> dict:
+
+async def run_incremental_process(
+    hours: int = 24, 
+    news_types: Optional[Union[str, List[str]]] = None
+) -> dict:
     """
     运行增量处理流程（处理最近N小时的数据）
     
     Args:
         hours: 处理最近多少小时的数据
+        news_types: 要处理的新闻类型，可以是单个字符串或字符串列表
+                   默认为 ["baidu", "douyin_hot"]
         
     Returns:
         dict: 处理结果
     """
+    # 设置默认的新闻类型
+    if news_types is None:
+        news_types = ["baidu", "douyin_hot"]
+    
+    # 格式化显示信息
+    if isinstance(news_types, str):
+        type_display = news_types
+    elif isinstance(news_types, list):
+        type_display = ', '.join(news_types)
+    else:
+        type_display = str(news_types)
+    
     logger.info(f"开始增量处理，时间范围: 最近 {hours} 小时")
+    logger.info(f"处理的新闻类型: {type_display}")
     
     end_time = datetime.now()
     start_time = end_time - timedelta(hours=hours)
     
+    # 直接调用run_full_process，传递news_types（支持单个或多个类型）
     return await run_full_process(
         add_time_start=start_time,
         add_time_end=end_time,
         show_progress=True,
-        news_type="baidu"
-
+        news_type=news_types
     )
 
 
@@ -130,7 +155,7 @@ async def run_daily_process() -> dict:
 async def run_custom_process(
     start_time: str,
     end_time: str,
-    news_type: Optional[str] = None
+    news_type: Optional[Union[str, List[str]]] = None
 ) -> dict:
     """
     运行自定义时间范围的处理流程
@@ -138,7 +163,7 @@ async def run_custom_process(
     Args:
         start_time: 开始时间字符串 (格式: YYYY-MM-DD HH:MM:SS)
         end_time: 结束时间字符串 (格式: YYYY-MM-DD HH:MM:SS)
-        news_type: 新闻类型过滤
+        news_type: 新闻类型过滤，可以是单个字符串或字符串列表
         
     Returns:
         dict: 处理结果
@@ -175,7 +200,7 @@ def show_usage():
     python main_processor.py [模式]
 
 支持的模式:
-    incremental  - 增量处理（默认，处理最近1小时数据）
+    incremental  - 增量处理（默认，处理最近1小时数据，支持baidu和douyin_hot）
     daily        - 每日处理（处理昨天的数据）
     custom       - 自定义时间范围处理
     
@@ -187,8 +212,8 @@ def show_usage():
     - LLM_RETRY_TIMES: 重试次数
     
 示例:
-    python main_processor.py                    # 增量处理（最近1小时）
-    python main_processor.py incremental       # 增量处理（最近1小时）
+    python main_processor.py                    # 增量处理（最近1小时，baidu+douyin_hot）
+    python main_processor.py incremental       # 增量处理（最近1小时，baidu+douyin_hot）
     python main_processor.py daily             # 每日处理
     python main_processor.py custom            # 自定义时间范围（交互式输入）
     """)
@@ -206,6 +231,7 @@ async def main():
         
         # 根据模式执行不同的处理流程
         if mode == "incremental":
+            # 默认处理baidu和douyin_hot两种类型
             result = await run_incremental_process(hours=1)
         elif mode == "daily":
             result = await run_daily_process()
