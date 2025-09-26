@@ -170,7 +170,7 @@ class MainProcessorTester:
         logger.info("=" * 50)
         
         try:
-            from config.settings_new import settings
+            from config.settings import settings
             
             # 测试配置读取
             logger.info(f"数据库URL: {settings.DATABASE_URL}")

@@ -8,7 +8,7 @@ import redis
 from typing import Any, Optional, List, Dict
 from datetime import datetime, timedelta
 from loguru import logger
-from config.settings_new import settings
+from config.settings import settings
 
 
 class CacheService:

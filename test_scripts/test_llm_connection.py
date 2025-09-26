@@ -9,7 +9,7 @@ import asyncio
 import json
 from loguru import logger
 from services.llm_wrapper import llm_wrapper
-from config.settings_new import settings
+from config.settings import settings
 
 async def test_llm_connection():
     """测试大模型连接"""

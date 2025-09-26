@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import json
 from typing import List, Dict, Optional, Tuple, Callable, Union
 from datetime import datetime, timedelta
 from loguru import logger
@@ -16,16 +17,97 @@ from models.hot_aggr_models import HotAggrEvent, HotAggrNewsEventRelation, HotAg
 from services.llm_wrapper import llm_wrapper
 from services.cache_service_simple import cache_service
 from services.prompt_templates import prompt_templates
-from config.settings_new import settings
+from config.settings import settings
 
 
 class EventAggregationService:
     """事件聚合服务类"""
-    
+
     def __init__(self):
         """初始化服务"""
         self.recent_events_count = settings.RECENT_EVENTS_COUNT
         self.event_summary_days = settings.EVENT_SUMMARY_DAYS
+
+    def _merge_regions_with_cities(self, existing_regions: str, city_names: List[str]) -> str:
+        """
+        合并现有的regions字段和城市名称，进行去重
+
+        Args:
+            existing_regions: 现有的regions字段值
+            city_names: 新闻中的城市名称列表
+
+        Returns:
+            合并后的regions字符串
+        """
+        # 解析现有regions
+        regions_set = set()
+        if existing_regions:
+            # 处理可能的JSON格式或逗号分隔格式
+            try:
+                if existing_regions.startswith('[') or existing_regions.startswith('{'):
+                    # JSON格式
+                    regions_data = json.loads(existing_regions)
+                    if isinstance(regions_data, list):
+                        regions_set.update(regions_data)
+                    elif isinstance(regions_data, str):
+                        regions_set.add(regions_data)
+                else:
+                    # 逗号分隔格式
+                    regions_set.update([r.strip() for r in existing_regions.split(',') if r.strip()])
+            except (json.JSONDecodeError, TypeError):
+                # 直接作为字符串处理
+                regions_set.add(existing_regions.strip())
+
+        # 添加城市名称（去重并清理）
+        for city_name in city_names:
+            if city_name and city_name.strip():
+                # 处理逗号分隔的城市名称
+                city_parts = [c.strip() for c in city_name.split(',') if c.strip()]
+                regions_set.update(city_parts)
+
+        # 移除空字符串和无效值
+        regions_set.discard('')
+        regions_set.discard('null')
+        regions_set.discard('None')
+
+        # 返回合并后的结果
+        if not regions_set:
+            return ''
+
+        # 如果只有一个区域，直接返回
+        if len(regions_set) == 1:
+            return list(regions_set)[0]
+
+        # 多个区域，返回逗号分隔的格式
+        return ','.join(sorted(regions_set))
+
+    def _get_news_city_names(self, news_ids: List[int]) -> List[str]:
+        """
+        获取新闻的城市名称列表
+
+        Args:
+            news_ids: 新闻ID列表
+
+        Returns:
+            城市名称列表
+        """
+        city_names = []
+        try:
+            with get_db_session() as db:
+                news_records = db.query(HotNewsBase.city_name).filter(
+                    HotNewsBase.id.in_(news_ids)
+                ).filter(
+                    HotNewsBase.city_name.isnot(None)
+                ).filter(
+                    HotNewsBase.city_name != ''
+                ).all()
+
+                city_names = [record.city_name for record in news_records if record.city_name]
+
+        except Exception as e:
+            logger.error(f"获取新闻城市名称失败: {e}")
+
+        return city_names
         
     async def run_aggregation_process(
         self,
@@ -93,7 +175,7 @@ class EventAggregationService:
             # 如果指定了批次大小，临时修改设置
             original_batch_size = None
             if batch_size:
-                from config.settings_new import settings
+                from config.settings import settings
                 original_batch_size = settings.LLM_BATCH_SIZE
                 settings.LLM_BATCH_SIZE = batch_size
             
@@ -353,7 +435,22 @@ class EventAggregationService:
                 for existing_event in result.get('existing_events', []):
                     event_id = existing_event['event_id']
                     news_ids = existing_event['news_ids']
-                    
+
+                    # 获取相关新闻的城市名称
+                    city_names = self._get_news_city_names(news_ids)
+
+                    # 更新事件的regions字段
+                    if city_names:
+                        event_record = db.query(HotAggrEvent).filter(HotAggrEvent.id == event_id).first()
+                        if event_record:
+                            merged_regions = self._merge_regions_with_cities(
+                                event_record.regions or '', city_names
+                            )
+                            if merged_regions != event_record.regions:
+                                event_record.regions = merged_regions
+                                event_record.updated_at = datetime.now()
+                                logger.debug(f"更新事件 {event_id} 的regions: '{event_record.regions}' -> '{merged_regions}'")
+
                     # 保存新闻和事件的关联关系
                     for news_id in news_ids:
                         relation = HotAggrNewsEventRelation(
@@ -364,30 +461,37 @@ class EventAggregationService:
                             created_at=datetime.now()
                         )
                         db.add(relation)
-                    
+
                     processed_count += len(news_ids)
                     processed_news_ids.extend(news_ids)
                     logger.debug(f"将 {len(news_ids)} 条新闻归入事件 {event_id}")
                 
                 # 处理新创建的事件
                 for new_event in result.get('new_events', []):
+                    # 获取相关新闻的城市名称
+                    news_ids = new_event['news_ids']
+                    city_names = self._get_news_city_names(news_ids)
+
+                    # 合并大模型生成的region字段和新闻的city_name
+                    llm_regions = new_event.get('region', '')
+                    merged_regions = self._merge_regions_with_cities(llm_regions, city_names)
+
                     # 创建新事件
                     event = HotAggrEvent(
                         title=new_event['title'],
                         description=new_event['summary'],
                         event_type=new_event['event_type'],
-                        regions=new_event['region'],
+                        regions=merged_regions,
                         keywords=','.join(new_event.get('tags', [])),
                         confidence_score=new_event.get('confidence', 0.0),
                         created_at=datetime.now(),
                         updated_at=datetime.now()
                     )
-                    
+
                     db.add(event)
                     db.flush()  # 获取新插入的ID
-                    
+
                     # 关联新闻到事件
-                    news_ids = new_event['news_ids']
                     for news_id in news_ids:
                         relation = HotAggrNewsEventRelation(
                             news_id=news_id,
@@ -397,10 +501,10 @@ class EventAggregationService:
                             created_at=datetime.now()
                         )
                         db.add(relation)
-                    
+
                     processed_count += len(news_ids)
                     processed_news_ids.extend(news_ids)
-                    logger.info(f"创建新事件 {event.id}，包含 {len(news_ids)} 条新闻")
+                    logger.info(f"创建新事件 {event.id}，包含 {len(news_ids)} 条新闻，合并regions: '{merged_regions}'")
                 
                 # 注意：不再处理unprocessed_news，所有新闻都应该在existing_events或new_events中
                 # 如果大模型返回了unprocessed_news，记录警告

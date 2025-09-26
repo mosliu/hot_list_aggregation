@@ -13,8 +13,10 @@ from typing import List, Dict, Any, Optional, Callable, Tuple, Set
 from datetime import datetime
 import openai
 from loguru import logger
-from config.settings_new import settings
+from config.settings import settings
 from services.cache_service_simple import cache_service
+import uuid
+import time
 
 
 class LLMWrapper:
@@ -34,6 +36,11 @@ class LLMWrapper:
         self.debug_mode = False
         self.debug_dir = Path("docs/debug/llm_requests")
         self.debug_dir.mkdir(parents=True, exist_ok=True)
+
+        # LLM调用日志配置
+        self.call_log_enabled = True
+        self.call_log_dir = Path("logs/llm_calls")
+        self.call_log_dir.mkdir(parents=True, exist_ok=True)
         
     def enable_debug_mode(self, enabled: bool = True):
         """启用或禁用调试模式"""
@@ -42,6 +49,34 @@ class LLMWrapper:
             logger.info("LLM调试模式已启用，请求和响应将被记录")
         else:
             logger.info("LLM调试模式已禁用")
+
+    def enable_call_logging(self, enabled: bool = True):
+        """启用或禁用调用日志记录"""
+        self.call_log_enabled = enabled
+        if enabled:
+            logger.info("LLM调用日志记录已启用")
+        else:
+            logger.info("LLM调用日志记录已禁用")
+
+    def _save_call_log(self, call_data: Dict):
+        """保存LLM调用日志到单独文件"""
+        if not self.call_log_enabled:
+            return
+
+        try:
+            # 生成唯一的文件名
+            call_id = call_data.get('call_id', str(uuid.uuid4()))
+            timestamp = call_data.get('timestamp', datetime.now().isoformat().replace(':', '-'))
+            log_filename = f"{timestamp}_{call_id}.json"
+            log_file = self.call_log_dir / log_filename
+
+            with open(log_file, 'w', encoding='utf-8') as f:
+                json.dump(call_data, f, ensure_ascii=False, indent=2)
+
+            logger.debug(f"LLM调用日志已保存: {log_file}")
+
+        except Exception as e:
+            logger.error(f"保存LLM调用日志失败: {e}")
     
     def _generate_request_hash(self, prompt: str, model: str, temperature: float, max_tokens: int) -> str:
         """生成请求的唯一哈希值"""
@@ -117,17 +152,47 @@ class LLMWrapper:
         if max_tokens is None:
             max_tokens = settings.EVENT_AGGREGATION_MAX_TOKENS
         
-        # 生成请求哈希
+        # 生成请求哈希和调用ID
         request_hash = self._generate_request_hash(prompt, model, temperature, max_tokens)
-        
+        call_id = str(uuid.uuid4())
+        call_start_time = time.time()
+
         # 调试模式：尝试加载保存的响应
         if self.debug_mode:
             saved_response = self._load_debug_response(request_hash)
             if saved_response:
                 return saved_response
-        
+
+        # 准备调用日志数据
+        call_log_data = {
+            "call_id": call_id,
+            "timestamp": datetime.now().isoformat(),
+            "request": {
+                "base_url": settings.OPENAI_BASE_URL,
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "messages": [{"role": "user", "content": prompt}],
+                "prompt_length": len(prompt),
+                "request_hash": request_hash
+            },
+            "response": None,
+            "error": None,
+            "attempts": [],
+            "total_duration_seconds": 0,
+            "success": False
+        }
+
         # 实际调用大模型
         for attempt in range(self.retry_times):
+            attempt_start_time = time.time()
+            attempt_data = {
+                "attempt_number": attempt + 1,
+                "start_time": datetime.now().isoformat(),
+                "duration_seconds": 0,
+                "error": None
+            }
+
             try:
                 response = await self.client.chat.completions.create(
                     model=model,
@@ -135,24 +200,62 @@ class LLMWrapper:
                     temperature=temperature,
                     max_tokens=max_tokens
                 )
-                
+
+                attempt_duration = time.time() - attempt_start_time
+                attempt_data["duration_seconds"] = round(attempt_duration, 3)
+
+                # 记录响应详情
+                response_data = {
+                    "content": response.choices[0].message.content,
+                    "usage": {
+                        "prompt_tokens": response.usage.prompt_tokens if response.usage else None,
+                        "completion_tokens": response.usage.completion_tokens if response.usage else None,
+                        "total_tokens": response.usage.total_tokens if response.usage else None
+                    },
+                    "model": response.model,
+                    "finish_reason": response.choices[0].finish_reason,
+                    "response_length": len(response.choices[0].message.content) if response.choices[0].message.content else 0
+                }
+
                 content = response.choices[0].message.content
                 if content:
                     content = content.strip()
-                    
-                    # 保存调试数据
+
+                    # 更新调用日志
+                    call_log_data["response"] = response_data
+                    call_log_data["success"] = True
+                    call_log_data["total_duration_seconds"] = round(time.time() - call_start_time, 3)
+                    call_log_data["attempts"].append(attempt_data)
+
+                    # 保存调用日志
+                    self._save_call_log(call_log_data)
+
+                    # 保存调试数据（保持向后兼容）
                     self._save_debug_data(request_hash, prompt, content, model, temperature, max_tokens)
-                    
-                    logger.debug(f"大模型调用成功，尝试次数: {attempt + 1}")
+
+                    logger.debug(f"大模型调用成功，尝试次数: {attempt + 1}，总耗时: {call_log_data['total_duration_seconds']}s")
                     return content
                 else:
+                    attempt_data["error"] = "Empty response content"
+                    call_log_data["attempts"].append(attempt_data)
                     logger.warning(f"大模型返回空内容，尝试次数: {attempt + 1}")
-                    
+
             except Exception as e:
+                attempt_duration = time.time() - attempt_start_time
+                attempt_data["duration_seconds"] = round(attempt_duration, 3)
+                attempt_data["error"] = str(e)
+                call_log_data["attempts"].append(attempt_data)
+
                 logger.error(f"大模型调用失败，尝试次数: {attempt + 1}, 错误: {e}")
                 if attempt < self.retry_times - 1:
                     await asyncio.sleep(2 ** attempt)  # 指数退避
-                    
+                else:
+                    # 最后一次尝试失败，记录最终错误
+                    call_log_data["error"] = str(e)
+                    call_log_data["total_duration_seconds"] = round(time.time() - call_start_time, 3)
+
+        # 所有尝试都失败，保存失败的调用日志
+        self._save_call_log(call_log_data)
         return None
     
     async def process_batch(

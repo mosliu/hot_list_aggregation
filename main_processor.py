@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Union
 
 from loguru import logger
-from config.settings_new import settings
+from config.settings import settings
 from services.event_aggregation_service import event_aggregation_service
 
 

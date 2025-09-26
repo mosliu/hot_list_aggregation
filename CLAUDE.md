@@ -1,0 +1,4 @@
+- 除了readme.md 以外的文档编写，都放在docs目录下
+- 测试功能的脚本，都放在test_script目录下
+- 应积极进行注释，并且记得要对错误进行处理，处理时输出内容请详细
+- 积极使用sequential-thinking mcp 做任务的规划分解
