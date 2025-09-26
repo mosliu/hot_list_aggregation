@@ -175,7 +175,7 @@ class PromptTemplates:
 ```
 """
 
-    # 事件合并建议模板
+    # 事件合并建议模板（已弃用 - 保留用于兼容性）
     EVENT_MERGE_SUGGESTION_TEMPLATE = """
 请分析以下两个事件是否应该合并，并给出建议。
 
@@ -219,6 +219,65 @@ ID: {event_b_id}
 ```
 """
 
+    # 批量事件合并分析模板（新版本）
+    EVENT_BATCH_MERGE_ANALYSIS_TEMPLATE = """
+你是一个专业的热点事件分析专家，请分析以下事件列表，识别出哪些事件应该合并。
+
+事件列表：
+{events_list}
+
+分析要求：
+1. **全局分析**：综合分析所有事件之间的关联性
+2. **聚合识别**：找出描述同一事件或相关事件的不同报道
+3. **多重合并**：可能存在多个事件需要合并成一个
+4. **时效性考虑**：优先合并时间相近的相关事件
+
+分析维度：
+- 内容相似性：是否描述同一事件或事件的不同方面
+- 时间关联性：事件发生时间是否相近或有因果关系
+- 地域关联性：是否发生在同一地区或相关地区
+- 主体关联性：涉及的人物、机构是否相同
+- 因果关系：是否存在事件发展的因果链条
+
+输出格式：
+```json
+{{
+  "merge_suggestions": [
+    {{
+      "group_id": "merge_group_1",
+      "events_to_merge": [101, 103, 105],
+      "primary_event_id": 101,
+      "confidence": 0.85,
+      "reason": "这些事件都描述了同一起交通事故的不同方面",
+      "merged_title": "合并后的事件标题",
+      "merged_description": "合并后的事件描述",
+      "merged_keywords": "关键词1,关键词2,关键词3",
+      "merged_regions": "地区1,地区2",
+      "analysis": {{
+        "content_similarity": 0.9,
+        "time_correlation": 0.8,
+        "location_correlation": 0.9,
+        "entity_correlation": 0.7
+      }}
+    }}
+  ],
+  "analysis_summary": {{
+    "total_events": 10,
+    "merge_groups": 2,
+    "unmergeable_events": [102, 104, 106],
+    "confidence_threshold_used": 0.75
+  }}
+}}
+```
+
+注意事项：
+1. 只有置信度 >= 0.75 的合并建议才应该输出
+2. primary_event_id 应该是时间最早的事件ID
+3. merged_title 和 merged_description 应该综合所有相关事件的信息
+4. 如果没有发现需要合并的事件，merge_suggestions 应该为空数组
+5. 每个合并组至少包含2个事件
+"""
+
     @classmethod
     def get_template(cls, template_name: str) -> str:
         """
@@ -235,7 +294,8 @@ ID: {event_b_id}
             'event_classification': cls.EVENT_CLASSIFICATION_TEMPLATE,
             'location_recognition': cls.LOCATION_RECOGNITION_TEMPLATE,
             'event_summary': cls.EVENT_SUMMARY_TEMPLATE,
-            'event_merge_suggestion': cls.EVENT_MERGE_SUGGESTION_TEMPLATE
+            'event_merge_suggestion': cls.EVENT_MERGE_SUGGESTION_TEMPLATE,
+            'event_batch_merge_analysis': cls.EVENT_BATCH_MERGE_ANALYSIS_TEMPLATE
         }
         
         return template_map.get(template_name, "")

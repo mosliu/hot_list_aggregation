@@ -88,6 +88,14 @@ class Settings(BaseSettings):
     HISTORY_RELATION_DAYS: int = Field(default=30, description="历史关联分析天数")
     MIN_CONFIDENCE_THRESHOLD: float = Field(default=0.6, description="最小置信度阈值")
 
+    # ==================== 事件合并专用配置 ====================
+    EVENT_COMBINE_COUNT: int = Field(default=30, description="事件合并分析的事件数量")
+    EVENT_COMBINE_CONFIDENCE_THRESHOLD: float = Field(default=0.75, description="事件合并置信度阈值")
+    EVENT_COMBINE_MODEL: str = Field(default="gemini-2.5-pro", description="事件合并使用的大模型")
+    EVENT_COMBINE_TEMPERATURE: float = Field(default=0.7, description="事件合并大模型温度参数")
+    EVENT_COMBINE_MAX_TOKENS: int = Field(default=2000, description="事件合并大模型最大令牌数")
+    EVENT_COMBINE_MAX_LLM_CALLS: int = Field(default=100, description="事件合并最大LLM调用次数")
+
     # ==================== 日志配置 ====================
     LOG_LEVEL: str = Field(default="INFO", description="日志级别")
     LOG_FILE_PATH: str = Field(default="logs/app.log", description="日志文件路径")

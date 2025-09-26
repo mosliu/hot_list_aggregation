@@ -148,6 +148,80 @@ MAX_CONCURRENT_REQUESTS=5
 
 📖 **详细的定时任务执行流程请参考**: [定时任务执行流程文档](docs/scheduler_workflow.md)
 
+## 事件合并功能
+
+系统提供强大的事件合并功能，可以将相关的重复事件进行智能合并，提高数据质量和分析效率。
+
+### 合并模式
+
+#### 1. 自动合并模式
+```bash
+# 增量合并（默认）
+python main_combine.py
+
+# 每日合并（适合定时任务）
+python main_combine.py daily
+
+# 自定义合并（需确认）
+python main_combine.py custom
+```
+
+**特点:**
+- 使用LLM智能分析事件相似性
+- 基于置信度阈值自动决定是否合并
+- 支持批量分析和处理
+
+#### 2. 手动合并模式 🆕
+```bash
+# 合并指定的事件ID
+python main_combine.py manual 367,397,400
+```
+
+**特点:**
+- 跳过LLM分析，直接合并指定事件
+- 适用于测试和精确控制场景
+- 支持任意数量事件的合并
+- 第一个ID自动成为主事件
+
+### 配置参数
+
+所有合并参数在 `.env` 文件中配置：
+
+```env
+# 事件合并配置
+EVENT_COMBINE_COUNT=50                    # 分析的事件数量
+EVENT_COMBINE_CONFIDENCE_THRESHOLD=0.8   # 合并置信度阈值
+EVENT_COMBINE_MODEL=gemini-2.5-pro       # 使用的大模型
+EVENT_COMBINE_TEMPERATURE=0.3            # 模型温度参数
+EVENT_COMBINE_MAX_TOKENS=2000            # 最大令牌数
+```
+
+### 使用说明
+
+📖 **详细使用指南请参考**: [手动合并功能使用指南](docs/manual_merge_guide.md)
+
+**快速开始:**
+1. 查看可用事件: 运行测试脚本了解事件数据
+2. 选择要合并的事件ID
+3. 执行合并命令并确认操作
+4. 检查合并结果和历史记录
+
+**测试验证:**
+```bash
+# 功能测试（无实际合并）
+python test_scripts/test_manual_merge.py
+
+# 简单测试（无交互）
+python test_scripts/test_manual_merge_simple.py
+```
+
+### ⚠️ 重要提醒
+
+- 事件合并是**不可逆操作**，请谨慎使用
+- 合并会将子事件标记为"已合并"状态
+- 所有操作会记录在历史关联表中
+- 建议先在测试环境验证功能
+
 ## 数据库设计
 
 ### 核心表结构
