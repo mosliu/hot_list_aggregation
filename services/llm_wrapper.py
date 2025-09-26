@@ -58,16 +58,26 @@ class LLMWrapper:
         else:
             logger.info("LLM调用日志记录已禁用")
 
+    def _get_safe_timestamp(self, timestamp_str: str = None) -> str:
+        """获取Windows兼容的时间戳格式"""
+        if timestamp_str:
+            # 处理传入的时间戳，替换冒号
+            return timestamp_str.replace(':', '-')
+        else:
+            # 生成新的时间戳，直接使用Windows兼容格式
+            return datetime.now().strftime("%Y-%m-%dT%H-%M-%S.%f")
+
     def _save_call_log(self, call_data: Dict):
         """保存LLM调用日志到单独文件"""
         if not self.call_log_enabled:
             return
 
         try:
-            # 生成唯一的文件名
+            # 生成唯一的文件名，确保时间戳格式Windows兼容
             call_id = call_data.get('call_id', str(uuid.uuid4()))
-            timestamp = call_data.get('timestamp', datetime.now().isoformat().replace(':', '-'))
-            log_filename = f"{timestamp}_{call_id}.json"
+            original_timestamp = call_data.get('timestamp')
+            safe_timestamp = self._get_safe_timestamp(original_timestamp)
+            log_filename = f"{safe_timestamp}_{call_id}.json"
             log_file = self.call_log_dir / log_filename
 
             with open(log_file, 'w', encoding='utf-8') as f:
