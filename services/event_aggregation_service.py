@@ -112,11 +112,23 @@ class EventAggregationService:
             
             # 6. 处理聚合结果
             processed_count = 0
+            all_processed_news_ids = set()
+
             for result in success_results:
-                count = await self._process_aggregation_result(result)
+                count, processed_ids = await self._process_aggregation_result(result)
                 processed_count += count
+                all_processed_news_ids.update(processed_ids)
+
+            # 7. 检查是否有遗漏的新闻
+            input_news_ids = {news['id'] for news in news_list}
+            missing_news_ids = input_news_ids - all_processed_news_ids
+
+            if missing_news_ids:
+                logger.warning(f"发现遗漏的新闻ID: {missing_news_ids}，将重新使用大模型处理")
+                missing_count = await self._handle_missing_news(list(missing_news_ids), all_events, prompt_templates.get_template('event_aggregation'))
+                processed_count += missing_count
             
-            # 7. 统计结果
+            # 8. 统计结果
             duration = (datetime.now() - start_time).total_seconds()
             result_stats = {
                 'status': 'success',
@@ -322,7 +334,7 @@ class EventAggregationService:
             logger.error(f"获取最近事件失败: {e}")
             return []
     
-    async def _process_aggregation_result(self, result: Dict) -> int:
+    async def _process_aggregation_result(self, result: Dict) -> Tuple[int, List[int]]:
         """
         处理聚合结果，更新数据库
         
@@ -330,10 +342,11 @@ class EventAggregationService:
             result: 大模型返回的聚合结果
             
         Returns:
-            处理的新闻数量
+            元组：(处理的新闻数量, 处理的新闻ID列表)
         """
         processed_count = 0
-        
+        processed_news_ids = []
+
         try:
             with get_db_session() as db:
                 # 处理归入已有事件的新闻
@@ -353,6 +366,7 @@ class EventAggregationService:
                         db.add(relation)
                     
                     processed_count += len(news_ids)
+                    processed_news_ids.extend(news_ids)
                     logger.debug(f"将 {len(news_ids)} 条新闻归入事件 {event_id}")
                 
                 # 处理新创建的事件
@@ -385,41 +399,14 @@ class EventAggregationService:
                         db.add(relation)
                     
                     processed_count += len(news_ids)
+                    processed_news_ids.extend(news_ids)
                     logger.info(f"创建新事件 {event.id}，包含 {len(news_ids)} 条新闻")
                 
-                # 处理未聚合的新闻 - 创建特殊的"未分类"事件
+                # 注意：不再处理unprocessed_news，所有新闻都应该在existing_events或new_events中
+                # 如果大模型返回了unprocessed_news，记录警告
                 unprocessed_news_ids = result.get('unprocessed_news', [])
                 if unprocessed_news_ids:
-                    logger.info(f"处理未聚合新闻数量: {len(unprocessed_news_ids)}")
-                    
-                    # 创建未分类事件
-                    unclassified_event = HotAggrEvent(
-                        title="未分类新闻",
-                        description="无法聚合到现有事件的新闻",
-                        event_type="unclassified",
-                        regions="",
-                        keywords="",
-                        confidence_score=0.5,
-                        created_at=datetime.now(),
-                        updated_at=datetime.now()
-                    )
-                    
-                    db.add(unclassified_event)
-                    db.flush()  # 获取事件ID
-                    
-                    # 为未聚合的新闻创建关系记录
-                    for news_id in unprocessed_news_ids:
-                        relation = HotAggrNewsEventRelation(
-                            news_id=news_id,
-                            event_id=unclassified_event.id,
-                            relation_type='未分类',
-                            confidence_score=0.5,
-                            created_at=datetime.now()
-                        )
-                        db.add(relation)
-                    
-                    processed_count += len(unprocessed_news_ids)
-                    logger.info(f"为 {len(unprocessed_news_ids)} 条未聚合新闻创建了未分类事件 {unclassified_event.id}")
+                    logger.warning(f"检测到未处理新闻ID: {unprocessed_news_ids}，这些新闻应该被重新处理")
                 
                 db.commit()
                 
@@ -428,8 +415,98 @@ class EventAggregationService:
             if 'db' in locals():
                 db.rollback()
         
+        return processed_count, processed_news_ids
+
+    async def _handle_missing_news(self, missing_news_ids: List[int], recent_events: List[Dict], prompt_template: str) -> int:
+        """
+        处理遗漏的新闻，使用大模型重试机制进行事件聚合
+
+        Args:
+            missing_news_ids: 遗漏的新闻ID列表
+            recent_events: 最近事件列表
+            prompt_template: 提示词模板
+
+        Returns:
+            处理的新闻数量
+        """
+        if not missing_news_ids:
+            return 0
+
+        processed_count = 0
+
+        try:
+            # 1. 获取遗漏新闻的详细信息
+            missing_news_list = []
+            with get_db_session() as db:
+                for news_id in missing_news_ids:
+                    news = db.query(HotNewsBase).filter(HotNewsBase.id == news_id).first()
+                    if not news:
+                        logger.warning(f"未找到新闻ID: {news_id}")
+                        continue
+
+                    news_dict = {
+                        'id': news.id,
+                        'title': news.title or '',
+                        'content': news.content or '',
+                        'desc': news.desc or '',
+                        'source': news.type or '',
+                        'type': news.type or '',
+                        'add_time': news.first_add_time.strftime('%Y-%m-%d %H:%M:%S') if news.first_add_time else '',
+                        'url': news.url or ''
+                    }
+                    missing_news_list.append(news_dict)
+
+            if not missing_news_list:
+                logger.warning("没有有效的遗漏新闻可以处理")
+                return 0
+
+            logger.info(f"准备重新处理遗漏新闻 {len(missing_news_list)} 条")
+
+            # 2. 使用大模型重新处理遗漏的新闻
+            # 使用较小的批次大小，提高处理成功率
+            retry_batch_size = min(3, len(missing_news_list))  # 最多3条一批
+
+            for i in range(0, len(missing_news_list), retry_batch_size):
+                batch = missing_news_list[i:i + retry_batch_size]
+                logger.info(f"重试处理批次 {i//retry_batch_size + 1}，新闻数量: {len(batch)}")
+
+                try:
+                    # 调用大模型处理
+                    result = await llm_wrapper.process_batch(
+                        news_batch=batch,
+                        recent_events=recent_events,
+                        prompt_template=prompt_template,
+                        validation_func=llm_wrapper.validate_aggregation_result
+                    )
+
+                    if result:
+                        # 处理成功的结果
+                        if isinstance(result, dict) and 'result' in result:
+                            actual_result = result['result']
+                        else:
+                            actual_result = result
+
+                        count, _ = await self._process_aggregation_result(actual_result)
+                        processed_count += count
+                        logger.info(f"重试批次成功处理 {count} 条新闻")
+
+                        # 如果还有部分失败，记录但不再创建单独事件
+                        if isinstance(result, dict) and result.get('missing_news'):
+                            logger.warning(f"重试批次仍有遗漏新闻: {[n['id'] for n in result['missing_news']]}")
+
+                    else:
+                        logger.error(f"重试批次处理失败，新闻ID: {[n['id'] for n in batch]}")
+
+                except Exception as e:
+                    logger.error(f"重试批次处理异常: {e}，新闻ID: {[n['id'] for n in batch]}")
+                    continue
+
+        except Exception as e:
+            logger.error(f"处理遗漏新闻异常: {e}")
+
+        logger.info(f"遗漏新闻重试完成，成功处理 {processed_count} 条")
         return processed_count
-    
+
     async def get_processing_statistics(self, days: int = 7) -> Dict:
         """
         获取处理统计信息
@@ -476,6 +553,88 @@ class EventAggregationService:
         except Exception as e:
             logger.error(f"获取处理统计失败: {e}")
             return {}
+
+    async def _process_single_news_events(
+        self,
+        news_list: List[Dict],
+        progress_callback: Optional[Callable] = None
+    ) -> Tuple[List[Dict], List[Dict]]:
+        """
+        处理单新闻事件生成（每条新闻生成一个事件）
+
+        Args:
+            news_list: 新闻列表
+            progress_callback: 进度回调函数
+
+        Returns:
+            成功结果列表和失败新闻列表的元组
+        """
+        logger.info(f"开始处理单新闻事件生成，共 {len(news_list)} 条新闻")
+
+        success_results = []
+        failed_news = []
+
+        try:
+            # 使用llm_wrapper处理，但使用单新闻prompt
+            batch_results, batch_failed = await llm_wrapper.process_news_concurrent(
+                news_list=news_list,
+                recent_events=[],  # 不传递已有事件
+                prompt_template=prompt_templates.format_single_news_event_prompt(news_list),
+                validation_func=self._validate_single_news_result,
+                progress_callback=progress_callback
+            )
+
+            # 转换结果格式以兼容现有处理逻辑
+            for result in batch_results:
+                if 'events' in result:
+                    # 将单新闻事件结果转换为聚合结果格式
+                    converted_result = {
+                        'new_events': result['events'],
+                        'existing_events': [],
+                        'unprocessed_news': []
+                    }
+                    success_results.append(converted_result)
+
+            failed_news.extend(batch_failed)
+
+        except Exception as e:
+            logger.error(f"单新闻事件处理异常: {e}")
+            failed_news = news_list
+
+        return success_results, failed_news
+
+    def _validate_single_news_result(self, result: Dict) -> bool:
+        """
+        验证单新闻事件生成结果
+
+        Args:
+            result: LLM返回的结果
+
+        Returns:
+            是否有效
+        """
+        try:
+            if not isinstance(result, dict):
+                return False
+
+            if 'events' not in result:
+                return False
+
+            events = result['events']
+            if not isinstance(events, list):
+                return False
+
+            # 验证每个事件的必要字段
+            for event in events:
+                required_fields = ['news_id', 'title', 'summary', 'event_type']
+                if not all(field in event for field in required_fields):
+                    return False
+
+            return True
+
+        except Exception as e:
+            logger.error(f"结果验证异常: {e}")
+            return False
 
 
 # 全局事件聚合服务实例

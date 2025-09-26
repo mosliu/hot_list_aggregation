@@ -418,7 +418,7 @@ class LLMWrapper:
         """
         try:
             # 检查必要字段
-            required_fields = ['existing_events', 'new_events', 'unprocessed_news']
+            required_fields = ['existing_events', 'new_events']
             for field in required_fields:
                 if field not in result:
                     logger.error(f"结果缺少必要字段: {field}")
@@ -442,7 +442,8 @@ class LLMWrapper:
             for event in result.get('new_events', []):
                 processed_news_ids.update(event.get('news_ids', []))
             
-            processed_news_ids.update(result.get('unprocessed_news', []))
+            # 注意：不再处理unprocessed_news字段
+            # processed_news_ids.update(result.get('unprocessed_news', []))
             
             # 检查是否有遗漏或多余的新闻ID
             missing_ids = input_news_ids - processed_news_ids

@@ -9,7 +9,7 @@ from typing import Dict, Any, List
 class PromptTemplates:
     """提示词模板类"""
     
-    # 事件聚合主模板
+    # 事件聚合主模板（保留原有逻辑作为备用）
     EVENT_AGGREGATION_TEMPLATE = """
 你是一个专业的新闻事件聚合分析师。请分析以下新闻，并根据已有事件进行聚合处理。
 
@@ -17,7 +17,7 @@ class PromptTemplates:
 1. 分析新闻内容，判断是否可以归入已有事件
 2. 对于可以归入的新闻，给出对应的事件ID和新闻ID
 3. 对于需要创建新事件的新闻，进行聚合并生成事件信息
-4. 对于无法处理的新闻，标记为未处理
+4. 对于无法聚合的单独新闻，也必须创建独立的事件（单新闻事件）
 
 ## 待处理新闻列表
 {news_list}
@@ -48,9 +48,18 @@ class PromptTemplates:
       "tags": ["地震", "自然灾害", "四川"],
       "confidence": 0.90,
       "priority": "high"
+    }},
+    {{
+      "news_ids": [1006],
+      "title": "单独新闻事件标题",
+      "summary": "无法与其他新闻聚合的单独事件",
+      "event_type": "其他",
+      "region": "相关地区",
+      "tags": ["相关标签"],
+      "confidence": 0.70,
+      "priority": "medium"
     }}
-  ],
-  "unprocessed_news": [1006, 1007]
+  ]
 }}
 ```
 
@@ -60,9 +69,9 @@ class PromptTemplates:
   - news_ids: 归入该事件的新闻ID列表
   - confidence: 置信度(0-1)
   - reason: 归入原因
-  
-- new_events: 需要创建的新事件
-  - news_ids: 聚合的新闻ID列表
+
+- new_events: 需要创建的新事件（包括聚合事件和单新闻事件）
+  - news_ids: 聚合的新闻ID列表（可以是多条新闻聚合，也可以是单条新闻）
   - title: 事件标题
   - summary: 事件摘要
   - event_type: 事件类型(政治、经济、社会、科技、体育、娱乐、自然灾害、事故、国际、其他)
@@ -70,15 +79,15 @@ class PromptTemplates:
   - tags: 相关标签列表
   - confidence: 置信度(0-1)
   - priority: 优先级(low/medium/high)
-  
-- unprocessed_news: 无法处理的新闻ID列表
 
 ## 注意事项
-1. 确保所有输入新闻ID都在输出中出现（要么在existing_events，要么在new_events，要么在unprocessed_news）
-2. 置信度应该真实反映聚合的可靠性
-3. 事件类型必须从给定的类型中选择
-4. 地域标签尽量精确到省市级别
-5. 标签应该简洁明了，便于后续检索
+1. **重要：所有输入新闻ID都必须在输出中出现（要么在existing_events中，要么在new_events中）**
+2. **不允许有任何新闻被遗漏或标记为无法处理**
+3. 如果某条新闻无法与其他新闻聚合，也无法归入已有事件，则必须为其单独创建一个新事件
+4. 置信度应该真实反映聚合的可靠性
+5. 事件类型必须从给定的类型中选择
+6. 地域标签尽量精确到省市级别
+7. 标签应该简洁明了，便于后续检索
 
 当前时间: {current_time}
 
@@ -257,12 +266,12 @@ ID: {event_b_id}
         """获取所有可用的模板名称"""
         return [
             'event_aggregation',
-            'event_classification', 
+            'event_classification',
             'location_recognition',
             'event_summary',
             'event_merge_suggestion'
         ]
-    
+
     @classmethod
     def format_aggregation_prompt(cls, news_list: List[Dict], recent_events: List[Dict]) -> str:
         """

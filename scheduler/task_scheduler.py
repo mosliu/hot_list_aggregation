@@ -73,15 +73,15 @@ class TaskScheduler:
                 misfire_grace_time=300  # 5分钟容错时间
             )
             
-            # 事件聚合任务 - 每30分钟执行一次
+            # 事件聚合任务 - 每2小时执行一次（使用main_processor逻辑）
             self.scheduler.add_job(
                 func=self._run_event_aggregation,
-                trigger=IntervalTrigger(minutes=30),
+                trigger=IntervalTrigger(hours=2),
                 id="event_aggregation",
-                name="事件聚合任务",
+                name="事件聚合任务 (main_processor)",
                 max_instances=1,
                 coalesce=True,
-                misfire_grace_time=600  # 10分钟容错时间
+                misfire_grace_time=1800  # 30分钟容错时间
             )
             
             # 标签分析任务 - 每小时执行一次
@@ -147,32 +147,40 @@ class TaskScheduler:
             }
     
     async def _run_event_aggregation(self):
-        """执行事件聚合任务"""
+        """执行事件聚合任务 - 使用main_processor逻辑"""
         task_name = "事件聚合任务"
         try:
-            self.logger.info(f"开始执行 {task_name}")
+            self.logger.info(f"开始执行 {task_name} (使用main_processor逻辑)")
             start_time = datetime.now()
-            
-            # 执行事件聚合
-            result = await self.event_task.aggregate_news_to_events()
-            
+
+            # 新的逻辑：使用main_processor的增量处理逻辑
+            from main_processor import run_incremental_process
+
+            # 调用main_processor的增量处理函数，处理最近2小时数据（与定时任务频率匹配）
+            result = await run_incremental_process(hours=2)
+
+            # 旧的逻辑已暂时停用，但保留以备后用：
+            # result = await self.event_task.aggregate_news_to_events()
+
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
-            
+
             self.logger.info(
                 f"{task_name} 执行完成 - "
-                f"聚合事件数: {result.get('events_created', 0)} - "
+                f"状态: {result.get('status', 'unknown')} - "
+                f"总新闻数: {result.get('total_news', 0)} - "
+                f"成功处理: {result.get('processed_count', 0)} - "
                 f"耗时: {duration:.2f}秒"
             )
-            
+
             # 记录任务执行状态
             self.tasks["event_aggregation"] = {
                 "last_run": end_time,
                 "duration": duration,
-                "status": "success",
+                "status": "success" if result.get('status') == 'success' else "failed",
                 "result": result
             }
-            
+
         except Exception as e:
             self.logger.error(f"{task_name} 执行失败: {e}")
             self.tasks["event_aggregation"] = {
