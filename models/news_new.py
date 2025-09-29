@@ -110,7 +110,6 @@ class HotNewsBase(Base):
             desc=data.get('desc') or data.get('summary'),  # 兼容性处理
             content=data.get('content'),
             city_name=data.get('city_name'),
-            first_add_time=first_add_time,
             last_update_time=last_update_time,
             highest_rank=data.get('highest_rank'),
             lowest_rank=data.get('lowest_rank'),
@@ -119,10 +118,92 @@ class HotNewsBase(Base):
         )
 
 
+class NewsProcessingStatus(Base):
+    """新闻处理状态表（无外键约束版本）"""
+    __tablename__ = 'news_processing_status'
+
+    id = Column(Integer, primary_key=True, autoincrement=True, comment='状态主键')
+    news_id = Column(Integer, nullable=False, comment='新闻ID')  # 移除外键约束
+    processing_stage = Column(String(50), nullable=False, default='pending', comment='处理阶段')
+    last_processed_at = Column(DateTime, comment='最后处理时间')
+    retry_count = Column(Integer, default=0, comment='重试次数')
+    error_message = Column(Text, comment='错误信息')
+    created_at = Column(DateTime, nullable=False, default=func.now(), comment='创建时间')
+    updated_at = Column(DateTime, nullable=False, default=func.now(), comment='更新时间')
+
+    # 添加索引
+    __table_args__ = (
+        Index('uk_news_processing', 'news_id', unique=True),
+        Index('idx_processing_stage', 'processing_stage'),
+        Index('idx_last_processed_at', 'last_processed_at'),
+        Index('idx_created_at', 'created_at'),
+    )
+
+    def __repr__(self):
+        return f"<NewsProcessingStatus(news_id={self.news_id}, stage='{self.processing_stage}')>"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典格式"""
+        return {
+            'id': self.id,
+            'news_id': self.news_id,
+            'processing_stage': self.processing_stage,
+            'last_processed_at': self.last_processed_at.isoformat() if self.last_processed_at else None,
+            'retry_count': self.retry_count,
+            'error_message': self.error_message,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'NewsProcessingStatus':
+        """从字典创建实例"""
+        # 处理时间字段
+        last_processed_at = None
+        if data.get('last_processed_at'):
+            if isinstance(data['last_processed_at'], str):
+                try:
+                    last_processed_at = datetime.fromisoformat(data['last_processed_at'].replace('Z', '+00:00'))
+                except ValueError:
+                    last_processed_at = None
+            else:
+                last_processed_at = data['last_processed_at']
+        
+        created_at = None
+        if data.get('created_at'):
+            if isinstance(data['created_at'], str):
+                try:
+                    created_at = datetime.fromisoformat(data['created_at'].replace('Z', '+00:00'))
+                except ValueError:
+                    created_at = None
+            else:
+                created_at = data['created_at']
+        
+        updated_at = None
+        if data.get('updated_at'):
+            if isinstance(data['updated_at'], str):
+                try:
+                    updated_at = datetime.fromisoformat(data['updated_at'].replace('Z', '+00:00'))
+                except ValueError:
+                    updated_at = None
+            else:
+                updated_at = data['updated_at']
+        
+        return cls(
+            news_id=data.get('news_id'),
+            processing_stage=data.get('processing_stage', 'pending'),
+            last_processed_at=last_processed_at,
+            retry_count=data.get('retry_count', 0),
+            error_message=data.get('error_message'),
+            created_at=created_at,
+            updated_at=updated_at
+        )
+
+
 class NewsEventRelation(Base):
     """新闻事件关联表（无外键约束版本）"""
-    __tablename__ = 'news_event_relations_new'
-
+    __tablename__ = 'hot_aggr_news_event_relation'
+    
     id = Column(BigInteger, primary_key=True, autoincrement=True, comment='主键ID')
     news_id = Column(BigInteger, nullable=False, comment='新闻ID')
     event_id = Column(BigInteger, nullable=False, comment='事件ID')

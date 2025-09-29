@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc, func
 
 from database import get_db_session
-from models.news import HotNewsBase, NewsProcessingStatus
+from models.news_new import HotNewsBase, NewsProcessingStatus
 from models.enums import ProcessingStage
 from models.logs import ProcessingLog
 from utils.logger import get_logger

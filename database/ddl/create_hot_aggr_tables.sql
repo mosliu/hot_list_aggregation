@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS `hot_aggr_events` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT COMMENT '事件主键',
   `title` varchar(255) NOT NULL COMMENT '事件标题',
   `description` text COMMENT '事件描述',
+  `category` varchar(50) DEFAULT NULL COMMENT '事件分类',
   `event_type` varchar(50) DEFAULT NULL COMMENT '事件类型：政治、经济、社会、科技等',
   `sentiment` varchar(20) DEFAULT NULL COMMENT '情感倾向：positive、negative、neutral',
   `entities` text COMMENT '实体信息JSON：人物、组织、地点等',

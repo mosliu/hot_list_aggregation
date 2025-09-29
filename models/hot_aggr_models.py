@@ -17,6 +17,7 @@ class HotAggrEvent(Base):
     id = Column(Integer, primary_key=True, autoincrement=True, comment='事件主键')
     title = Column(String(255), nullable=False, comment='事件标题')
     description = Column(Text, comment='事件描述')
+    category = Column(String(50), comment='事件分类')
     event_type = Column(String(50), comment='事件类型：政治、经济、社会、科技等')
     sentiment = Column(String(20), comment='情感倾向：positive、negative、neutral')
     entities = Column(Text, comment='实体信息JSON：人物、组织、地点等')
@@ -47,6 +48,7 @@ class HotAggrEvent(Base):
             'id': self.id,
             'title': self.title,
             'description': self.description,
+            'category': self.category,
             'event_type': self.event_type,
             'sentiment': self.sentiment,
             'entities': self.entities,

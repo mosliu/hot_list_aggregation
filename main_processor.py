@@ -216,6 +216,11 @@ def show_usage():
     python main_processor.py incremental       # 增量处理（最近1小时，baidu+douyin_hot）
     python main_processor.py daily             # 每日处理
     python main_processor.py custom            # 自定义时间范围（交互式输入）
+    
+新闻类型输入示例:
+    baidu                    # 单个类型
+    baidu,douyin_hot        # 多个类型（逗号分隔）
+    baidu, douyin_hot, weibo # 多个类型（支持空格）
     """)
 
 
@@ -240,7 +245,16 @@ async def main():
             print("请输入时间范围:")
             start_time = input("开始时间 (YYYY-MM-DD HH:MM:SS): ")
             end_time = input("结束时间 (YYYY-MM-DD HH:MM:SS): ")
-            news_type = input("新闻类型 (可选，直接回车跳过): ").strip() or None
+            news_type_input = input("新闻类型 (可选，多个类型用逗号分隔，直接回车跳过): ").strip()
+            
+            # 处理新闻类型输入
+            news_type = None
+            if news_type_input:
+                # 如果包含逗号，分割成列表
+                if ',' in news_type_input:
+                    news_type = [t.strip() for t in news_type_input.split(',') if t.strip()]
+                else:
+                    news_type = news_type_input
             
             result = await run_custom_process(start_time, end_time, news_type)
         else:

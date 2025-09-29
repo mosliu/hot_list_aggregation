@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 import uvicorn
 from contextlib import asynccontextmanager
 
-from api.endpoints import news, events, labeling, system
+from api.endpoints import news, events, labeling, system, tasks
 from utils.logger import get_logger
 from utils.exceptions import ServiceError, DatabaseError, AIServiceError
 from config.settings import get_settings
@@ -56,6 +56,7 @@ def create_app() -> FastAPI:
     app.include_router(events.router, prefix="/api/events", tags=["事件管理"])
     app.include_router(labeling.router, prefix="/api/labeling", tags=["标签分析"])
     app.include_router(system.router, prefix="/api/system", tags=["系统监控"])
+    app.include_router(tasks.router, prefix="/api/tasks", tags=["任务管理"])
     
     # 全局异常处理
     @app.exception_handler(ServiceError)

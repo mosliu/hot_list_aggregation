@@ -1,5 +1,4 @@
 """定时任务实现"""
-
 import asyncio
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
@@ -8,14 +7,12 @@ from services.news_service import NewsService
 from services.event_service import EventService
 from services.labeling_service import LabelingService
 from services.ai_service import AIService
-from models.news import NewsProcessingStatus
+from models.news_new import NewsProcessingStatus
 from models.enums import ProcessingStage
 from utils.logger import get_logger
 from utils.exceptions import TaskExecutionError
 
 logger = get_logger(__name__)
-
-
 class NewsProcessingTask:
     """新闻处理任务"""
     
