@@ -146,7 +146,7 @@ def main():
     )
     parser.add_argument(
         "--task",
-        choices=["news_processing", "event_aggregation", "labeling_task", "cleanup_task"],
+        choices=["data_processing", "event_combine"],
         help="任务名称（仅在task模式下使用）"
     )
     

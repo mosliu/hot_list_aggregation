@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc, func
 
 from database import get_db_session
-from models.events_new import Event, NewsEventRelation
+from models.events_new import Event
+from models.news_new import NewsEventRelation
 from models.hot_aggr_models import HotAggrEventLabel, HotAggrEventHistoryRelation
 from models.news_new import HotNewsBase
 from utils.logger import get_logger

@@ -8,7 +8,7 @@ from sqlalchemy import and_, or_, desc, func
 from database import get_db_session
 from models.news_new import HotNewsBase, NewsProcessingStatus
 from models.enums import ProcessingStage
-from models.logs import ProcessingLog
+from models.hot_aggr_models import HotAggrProcessingLog
 from utils.logger import get_logger
 from utils.exceptions import DatabaseError, DataValidationError
 
@@ -366,7 +366,7 @@ class NewsService:
         """
         try:
             with get_db_session() as session:
-                log_entry = ProcessingLog(
+                log_entry = HotAggrProcessingLog(
                     task_type=task_name,  # 使用task_type字段
                     task_id=f"{task_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",  # 生成任务ID
                     start_time=datetime.now(),  # 使用start_time字段

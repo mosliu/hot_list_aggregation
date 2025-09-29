@@ -10,24 +10,18 @@ from apscheduler.triggers.interval import IntervalTrigger
 from config import get_settings
 from utils.logger import get_logger
 from utils.exceptions import SchedulerError
-from .tasks import NewsProcessingTask, EventAggregationTask, LabelingTask
 
 logger = get_logger(__name__)
 
 
 class TaskScheduler:
-    """任务调度器类"""
+    """任务调度器类 - 只保留两个核心任务"""
     
     def __init__(self):
         self.settings = get_settings()
         self.scheduler = AsyncIOScheduler()
         self.tasks = {}
         self.logger = logger
-        
-        # 初始化任务实例
-        self.news_task = NewsProcessingTask()
-        self.event_task = EventAggregationTask()
-        self.labeling_task = LabelingTask()
         
     async def start(self):
         """启动调度器"""
@@ -41,6 +35,10 @@ class TaskScheduler:
             self.scheduler.start()
             
             self.logger.info("任务调度器启动成功")
+            
+            # 立即执行一次数据处理任务
+            self.logger.info("立即执行一次数据处理任务...")
+            await self._run_data_processing()
             
         except Exception as e:
             self.logger.error(f"启动任务调度器失败: {e}")
@@ -60,204 +58,115 @@ class TaskScheduler:
             self.logger.error(f"停止任务调度器失败: {e}")
     
     async def _setup_scheduled_tasks(self):
-        """设置定时任务"""
+        """设置定时任务 - 只保留两个核心任务"""
         try:
-            # 新闻处理任务 - 每10分钟执行一次
+            # 1. 数据处理任务 - 每小时执行，处理前24小时的baidu和douyin_hot数据
             self.scheduler.add_job(
-                func=self._run_news_processing,
-                trigger=IntervalTrigger(minutes=10),
-                id="news_processing",
-                name="新闻处理任务",
+                func=self._run_data_processing,
+                trigger=CronTrigger(minute=0),  # 每小时的0分执行
+                id="data_processing",
+                name="数据处理任务(baidu+douyin_hot)",
                 max_instances=1,
                 coalesce=True,
                 misfire_grace_time=300  # 5分钟容错时间
             )
             
-            # 事件聚合任务 - 每2小时执行一次（使用main_processor逻辑）
+            # 2. 事件合并任务 - 每小时执行，启动后15分钟开始
             self.scheduler.add_job(
-                func=self._run_event_aggregation,
-                trigger=IntervalTrigger(hours=2),
-                id="event_aggregation",
-                name="事件聚合任务 (main_processor)",
+                func=self._run_event_combine,
+                trigger=CronTrigger(minute=0),  # 每小时的15分执行
+                id="event_combine",
+                name="事件合并任务",
                 max_instances=1,
                 coalesce=True,
-                misfire_grace_time=1800  # 30分钟容错时间
+                misfire_grace_time=300  # 5分钟容错时间
             )
             
-            # 标签分析任务 - 每小时执行一次
-            self.scheduler.add_job(
-                func=self._run_labeling_task,
-                trigger=IntervalTrigger(hours=1),
-                id="labeling_task",
-                name="标签分析任务",
-                max_instances=1,
-                coalesce=True,
-                misfire_grace_time=1800  # 30分钟容错时间
-            )
-            
-            # 数据清理任务 - 每天凌晨2点执行
-            self.scheduler.add_job(
-                func=self._run_cleanup_task,
-                trigger=CronTrigger(hour=2, minute=0),
-                id="cleanup_task",
-                name="数据清理任务",
-                max_instances=1,
-                coalesce=True
-            )
-            
-            self.logger.info("定时任务设置完成")
+            self.logger.info("定时任务设置完成 - 已添加2个核心任务")
             
         except Exception as e:
             self.logger.error(f"设置定时任务失败: {e}")
             raise
     
-    async def _run_news_processing(self):
-        """执行新闻处理任务"""
-        task_name = "新闻处理任务"
+    async def _run_data_processing(self):
+        """执行数据处理任务 - 处理前24小时的baidu和douyin_hot数据"""
+        task_name = "数据处理任务"
         try:
             self.logger.info(f"开始执行 {task_name}")
             start_time = datetime.now()
             
-            # 执行新闻处理
-            result = await self.news_task.process_unprocessed_news()
-            
-            end_time = datetime.now()
-            duration = (end_time - start_time).total_seconds()
-            
-            self.logger.info(
-                f"{task_name} 执行完成 - "
-                f"处理数量: {result.get('processed_count', 0)} - "
-                f"耗时: {duration:.2f}秒"
-            )
-            
-            # 记录任务执行状态
-            self.tasks["news_processing"] = {
-                "last_run": end_time,
-                "duration": duration,
-                "status": "success",
-                "result": result
-            }
-            
-        except Exception as e:
-            self.logger.error(f"{task_name} 执行失败: {e}")
-            self.tasks["news_processing"] = {
-                "last_run": datetime.now(),
-                "status": "failed",
-                "error": str(e)
-            }
-    
-    async def _run_event_aggregation(self):
-        """执行事件聚合任务 - 使用main_processor逻辑"""
-        task_name = "事件聚合任务"
-        try:
-            self.logger.info(f"开始执行 {task_name} (使用main_processor逻辑)")
-            start_time = datetime.now()
-
-            # 新的逻辑：使用main_processor的增量处理逻辑
+            # 动态导入main_processor模块，避免循环导入
             from main_processor import run_incremental_process
-
-            # 调用main_processor的增量处理函数，处理最近2小时数据（与定时任务频率匹配）
-            result = await run_incremental_process(hours=2)
-
-            # 旧的逻辑已暂时停用，但保留以备后用：
-            # result = await self.event_task.aggregate_news_to_events()
-
+            
+            # 处理前24小时的baidu和douyin_hot数据
+            result = await run_incremental_process(
+                hours=24, 
+                news_types=["baidu", "douyin_hot"]
+            )
+            
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
-
-            self.logger.info(
-                f"{task_name} 执行完成 - "
-                f"状态: {result.get('status', 'unknown')} - "
-                f"总新闻数: {result.get('total_news', 0)} - "
-                f"成功处理: {result.get('processed_count', 0)} - "
-                f"耗时: {duration:.2f}秒"
-            )
-
+            
+            if result.get('status') == 'success':
+                self.logger.info(
+                    f"{task_name} 执行完成 - "
+                    f"处理了 {result.get('processed_count', 0)} 条新闻 - "
+                    f"耗时: {duration:.2f}秒"
+                )
+            else:
+                self.logger.error(f"{task_name} 执行失败: {result.get('message', '未知错误')}")
+            
             # 记录任务执行状态
-            self.tasks["event_aggregation"] = {
+            self.tasks["data_processing"] = {
                 "last_run": end_time,
                 "duration": duration,
                 "status": "success" if result.get('status') == 'success' else "failed",
                 "result": result
             }
-
+            
         except Exception as e:
-            self.logger.error(f"{task_name} 执行失败: {e}")
-            self.tasks["event_aggregation"] = {
+            self.logger.error(f"{task_name} 执行异常: {e}")
+            self.tasks["data_processing"] = {
                 "last_run": datetime.now(),
                 "status": "failed",
                 "error": str(e)
             }
     
-    async def _run_labeling_task(self):
-        """执行标签分析任务"""
-        task_name = "标签分析任务"
+    async def _run_event_combine(self):
+        """执行事件合并任务"""
+        task_name = "事件合并任务"
         try:
             self.logger.info(f"开始执行 {task_name}")
             start_time = datetime.now()
             
-            # 执行标签分析
-            result = await self.labeling_task.process_event_labeling()
+            # 动态导入main_combine模块，避免循环导入
+            from main_combine import run_incremental_combine
+            
+            result = await run_incremental_combine()
             
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
             
-            self.logger.info(
-                f"{task_name} 执行完成 - "
-                f"分析事件数: {result.get('processed_count', 0)} - "
-                f"耗时: {duration:.2f}秒"
-            )
+            if result.get('status') == 'success':
+                merged_count = result.get('merged_count', 0)
+                if merged_count > 0:
+                    self.logger.info(f"{task_name} 执行完成 - 合并了 {merged_count} 个事件 - 耗时: {duration:.2f}秒")
+                else:
+                    self.logger.info(f"{task_name} 执行完成 - 未发现需要合并的事件 - 耗时: {duration:.2f}秒")
+            else:
+                self.logger.error(f"{task_name} 执行失败: {result.get('message', '未知错误')}")
             
             # 记录任务执行状态
-            self.tasks["labeling_task"] = {
+            self.tasks["event_combine"] = {
                 "last_run": end_time,
                 "duration": duration,
-                "status": "success",
+                "status": "success" if result.get('status') == 'success' else "failed",
                 "result": result
             }
             
         except Exception as e:
-            self.logger.error(f"{task_name} 执行失败: {e}")
-            self.tasks["labeling_task"] = {
-                "last_run": datetime.now(),
-                "status": "failed",
-                "error": str(e)
-            }
-    
-    async def _run_cleanup_task(self):
-        """执行数据清理任务"""
-        task_name = "数据清理任务"
-        try:
-            self.logger.info(f"开始执行 {task_name}")
-            start_time = datetime.now()
-            
-            # 执行数据清理
-            # 这里可以添加具体的清理逻辑
-            result = {
-                "cleaned_logs": 0,
-                "cleaned_temp_files": 0
-            }
-            
-            end_time = datetime.now()
-            duration = (end_time - start_time).total_seconds()
-            
-            self.logger.info(
-                f"{task_name} 执行完成 - "
-                f"清理项目: {sum(result.values())} - "
-                f"耗时: {duration:.2f}秒"
-            )
-            
-            # 记录任务执行状态
-            self.tasks["cleanup_task"] = {
-                "last_run": end_time,
-                "duration": duration,
-                "status": "success",
-                "result": result
-            }
-            
-        except Exception as e:
-            self.logger.error(f"{task_name} 执行失败: {e}")
-            self.tasks["cleanup_task"] = {
+            self.logger.error(f"{task_name} 执行异常: {e}")
+            self.tasks["event_combine"] = {
                 "last_run": datetime.now(),
                 "status": "failed",
                 "error": str(e)
@@ -268,14 +177,10 @@ class TaskScheduler:
         try:
             self.logger.info(f"手动执行任务: {task_name}")
             
-            if task_name == "news_processing":
-                await self._run_news_processing()
-            elif task_name == "event_aggregation":
-                await self._run_event_aggregation()
-            elif task_name == "labeling_task":
-                await self._run_labeling_task()
-            elif task_name == "cleanup_task":
-                await self._run_cleanup_task()
+            if task_name == "data_processing":
+                await self._run_data_processing()
+            elif task_name == "event_combine":
+                await self._run_event_combine()
             else:
                 raise ValueError(f"未知的任务名称: {task_name}")
             
